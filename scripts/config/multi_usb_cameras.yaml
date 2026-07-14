@@ -1,0 +1,31 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  # Multi-USB camera source for identical cameras on Windows.
+  # DirectShow cannot reliably open two identical cameras at the same
+  # resolution. Use different resolutions here; resize in post-processing if
+  # the downstream model requires a fixed input size.
+  - type: usb_multi_camera
+    name: wrist_cameras
+    configs:
+      - camera_index: 1
+        topic_name: camera/wrist_left/image_raw
+        width: 640
+        height: 480
+        fps: 30
+        fourcc: MJPG
+        backend: dshow
+        save_images: true
+        image_format: png
+
+      - camera_index: 2
+        topic_name: camera/wrist_right/image_raw
+        width: 320
+        height: 240
+        fps: 30
+        fourcc: MJPG
+        backend: dshow
+        save_images: true
+        image_format: png

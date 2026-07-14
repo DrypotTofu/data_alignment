@@ -1,0 +1,30 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  # Two identical Endoskill cameras, each in its own OS process.
+  # On this system DirectShow cannot open two identical devices with the
+  # same FOURCC at the same time, so we use MJPG for the left camera and
+  # YUY2 for the right camera.  Both stream at 640x480.
+  - type: process_camera
+    name: camera_wrist_left
+    camera_index: 1
+    topic_name: camera/wrist_left/image_raw
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    backend: dshow
+    image_format: png
+
+  - type: process_camera
+    name: camera_wrist_right
+    camera_index: 2
+    topic_name: camera/wrist_right/image_raw
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: YUY2
+    backend: dshow
+    image_format: png

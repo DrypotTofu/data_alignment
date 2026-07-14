@@ -1,0 +1,15 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  - type: usb_camera
+    name: camera_usb_test
+    camera_index: 1
+    topic_name: camera/usb_test/image_raw
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    save_images: true
+    image_format: png

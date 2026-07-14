@@ -1,0 +1,95 @@
+# Example VLGP acquisition session configuration.
+# Copy this file and adjust it for your actual hardware setup.
+
+# Session output directory layout:
+#   <base_dir>/<session_name>/camera_wrist_left/...
+#   <base_dir>/<session_name>/camera_endoscope/...
+#   <base_dir>/<session_name>/robot_poses/...
+base_dir: ./sessions
+session_name: null  # null -> auto-generate from current UTC time
+
+# Unified timestamp source.
+#   host_realtime   : use time.time_ns() (default, easiest)
+#   twincat_master  : host time shifted to align with TwinCAT clock
+#   manual_offset   : host time + clock_offset_ns
+#
+# If you configure NTP between PC and TwinCAT, use host_realtime and both
+# clocks will be in the same domain. Verify with:
+#   python test\check_clock_sync.py --ams-net-id 192.168.1.100.1.1
+clock_source: host_realtime
+clock_offset_ns: 0
+
+# Data sources. Add more entries here as you add custom source types.
+sources:
+  - type: usb_camera
+    name: camera_wrist_left
+    camera_index: 0
+    topic_name: camera/wrist_left/image_raw
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    save_images: true
+    image_format: png
+
+  - type: usb_camera
+    name: camera_wrist_right
+    camera_index: 1
+    topic_name: camera/wrist_right/image_raw
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    save_images: true
+    image_format: png
+
+  # Multi-camera source: use this when you have two or more identical
+  # USB cameras. They are opened sequentially in a single thread, which
+  # avoids DirectShow conflicts. Each camera must use a different resolution.
+  # - type: usb_multi_camera
+  #   name: wrist_cameras
+  #   configs:
+  #     - camera_index: 1
+  #       topic_name: camera/wrist_left/image_raw
+  #       width: 640
+  #       height: 480
+  #       backend: dshow
+  #     - camera_index: 2
+  #       topic_name: camera/wrist_right/image_raw
+  #       width: 320
+  #       height: 240
+  #       backend: dshow
+
+  # Placeholder for the Hikvision endoscope. Replace mode with 'sdk',
+  # 'hdmi', or 'rtsp' once the integration path is decided.
+  - type: endoscope
+    name: camera_endoscope
+    topic_name: camera/endoscope/image_raw
+    mode: sdk
+    # ip: 192.168.1.64
+    # username: admin
+    # password: xxx
+    # width: 1920
+    # height: 1080
+    # fps: 30
+
+  # Placeholder for TwinCAT ADS. Fill in the real AMS Net ID and symbols.
+  - type: twincat
+    name: robot_poses
+    topic_name: robot/pose
+    ams_net_id: 192.168.1.100.1.1
+    ams_port: 851
+    ip_address: 192.168.1.100
+    cycle_period_ms: 1.0
+    # timestamp_mode:
+    #   'twincat'    -> use MAIN.timestamp_ns from PLC (most accurate)
+    #   'pc_arrival' -> use PC time when ADS response arrives
+    #   'pc_cycle'   -> use PC time at start of each read cycle
+    timestamp_mode: twincat
+    symbols:
+      robot_pose: MAIN.robot_pose
+      joint_angles: MAIN.joint_angles
+      jaw_angle: MAIN.jaw_angle
+      instrument_type: MAIN.instrument_type
+      timestamp_ns: MAIN.timestamp_ns
+      heartbeat: MAIN.heartbeat

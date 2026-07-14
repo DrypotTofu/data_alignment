@@ -1,0 +1,33 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  # DSHOW + MSMF combination as originally planned.
+  # On the test PC MSMF initialisation is very slow while another camera
+  # is already streaming, so this config is kept for reference only.
+  # If your system does not show the same slowdown, set ready_timeout high
+  # enough (e.g. 30 s) and start the MSMF camera first.
+  - type: process_camera
+    name: camera_wrist_right
+    camera_index: 2
+    topic_name: camera/wrist_right/image_raw
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    backend: msmf
+    image_format: png
+    ready_timeout: 30
+
+  - type: process_camera
+    name: camera_wrist_left
+    camera_index: 1
+    topic_name: camera/wrist_left/image_raw
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    backend: dshow
+    image_format: png
+    ready_timeout: 30

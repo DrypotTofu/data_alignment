@@ -1,0 +1,39 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  - type: usb_multi_camera
+    name: endoskill_pair
+    configs:
+      - camera_index: 1
+        topic_name: camera/wrist_left/image_raw
+        width: 640
+        height: 480
+        fps: 30
+        fourcc: MJPG
+        backend: dshow
+        save_images: true
+        image_format: png
+
+      - camera_index: 2
+        topic_name: camera/wrist_right/image_raw
+        width: 320
+        height: 240
+        fps: 30
+        fourcc: MJPG
+        backend: dshow
+        save_images: true
+        image_format: png
+
+  - type: usb_camera
+    name: camera_lcc
+    camera_index: 3
+    topic_name: camera/lcc/image_raw
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    backend: dshow
+    save_images: true
+    image_format: png
