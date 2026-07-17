@@ -1,4 +1,4 @@
-name: SRT-H_dataAlignment
+name: SurgDataColl
 channels:
   - conda-forge
   - defaults
