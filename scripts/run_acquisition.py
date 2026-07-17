@@ -77,12 +77,15 @@ def build_source_from_config(source_cfg: dict[str, Any]):
     if kind == 'twincat':
         cfg = TwinCATConfig(
             topic_name=source_cfg.get('topic_name', name),
-            ams_net_id=source_cfg.get('ams_net_id', '192.168.1.100.1.1'),
+            ams_net_id=source_cfg.get('ams_net_id', '169.254.226.99.1.1'),
             ams_port=source_cfg.get('ams_port', 851),
-            ip_address=source_cfg.get('ip_address', '192.168.1.100'),
+            ip_address=source_cfg.get('ip_address', '192.168.22.22'),
             local_ams_net_id=source_cfg.get('local_ams_net_id'),
             cycle_period_ms=source_cfg.get('cycle_period_ms', 1.0),
             symbols=source_cfg.get('symbols'),
+            symbol_shapes=source_cfg.get('symbol_shapes'),
+            selected_arm=source_cfg.get('selected_arm', 1),
+            timestamp_mode=source_cfg.get('timestamp_mode', 'pc_arrival'),
         )
         return TwinCATSource(config=cfg)
 
