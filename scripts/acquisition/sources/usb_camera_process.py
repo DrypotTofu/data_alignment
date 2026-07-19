@@ -7,6 +7,7 @@ resolution. The subprocess writes frames and metadata.csv directly to disk.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -32,6 +33,10 @@ class USBCameraProcessConfig:
     backend: str = 'dshow'
     image_format: str = 'png'
     arm_id: int | None = None  # if set, output name becomes camera_arm_<id>
+    # Offset added to the worker's frame arrival time so that timestamps align
+    # with the session master clock (e.g. twincat_master). The base source
+    # passes this value from the shared UnifiedTimestamp at worker startup.
+    clock_offset_ns: int = 0
     duration: float | None = None  # if None, runs until stop signal
     stop_file: str = '.stop'
     ready_file: str = '.ready'
@@ -61,8 +66,8 @@ class USBCameraProcessSource(DataSource):
 
     def _build_out_dir(self, session_dir: Path | None = None) -> Path:
         if session_dir is not None:
-            return session_dir / self.name
-        return Path('./sessions') / self.name
+            return (session_dir / self.name).resolve()
+        return Path('./sessions').resolve() / self.name
 
     def start(self) -> None:
         """Spawn the camera worker subprocess."""
@@ -92,6 +97,9 @@ class USBCameraProcessSource(DataSource):
             '--ready-file', self.config.ready_file,
             '--source-name', self.name,
             '--topic', self.config.topic_name,
+            '--clock-offset-ns', str(
+                self.clock.config.offset_ns if self.clock is not None else self.config.clock_offset_ns
+            ),
         ]
         if self.config.width is not None:
             cmd += ['--width', str(self.config.width)]
@@ -105,12 +113,17 @@ class USBCameraProcessSource(DataSource):
             cmd += ['--duration', str(self.config.duration)]
 
         logger.info('Starting worker process for %s: %s', self.name, ' '.join(cmd))
+        env = os.environ.copy()
+        scripts_dir = str(Path(__file__).resolve().parents[2])
+        env['PYTHONPATH'] = scripts_dir + os.pathsep + env.get('PYTHONPATH', '')
         self._process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             encoding='utf-8',
+            env=env,
+            cwd=scripts_dir,
         )
         self._wait_for_ready()
         self._started = True

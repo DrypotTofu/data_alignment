@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,7 @@ class USBMultiCameraSource(DataSource):
                                    self.name, cfg.camera_index)
                     continue
 
+                pc_arrival_ns = time.time_ns()
                 arrival_ns = self.clock.now_ns()
                 source_name = cfg.topic_name.replace('/', '_')
                 sample = DataSample(
@@ -140,6 +142,7 @@ class USBMultiCameraSource(DataSource):
                         'camera_index': cfg.camera_index,
                         'width': int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                         'height': int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                        'pc_arrival_ns': pc_arrival_ns,
                     }
                 )
                 self._put_sample(sample)

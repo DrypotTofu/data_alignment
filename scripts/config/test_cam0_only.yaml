@@ -1,0 +1,16 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  - type: usb_camera
+    name: camera_endoscope
+    camera_index: 0
+    topic_name: camera/endoscope/image_raw
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    backend: dshow
+    save_images: true
+    image_format: png

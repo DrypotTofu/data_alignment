@@ -46,7 +46,7 @@ def print_cameras(cameras: list[dict]) -> None:
     print(f'Detected {len(cameras)} camera(s):')
     print('-' * 60)
     for cam in cameras:
-        fourcc_str = ''.join(chr((cam['fourcc'] >> 8 * i) & 0xFF) for i in range(4))
+        fourcc_str = ' '.join(f'{((cam["fourcc"] >> 8 * i) & 0xFF):02x}' for i in range(4))
         print(f"  Index  : {cam['index']}")
         print(f"  Resolution: {cam['width']}x{cam['height']}")
         print(f"  Reported FPS: {cam['fps']:.2f}")

@@ -1,0 +1,38 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  - type: usb_multi_camera
+    name: all_cameras
+    configs:
+      - camera_index: 0
+        topic_name: camera/endoscope/image_raw
+        arm_id: 2
+        width: 640
+        height: 480
+        fps: 30
+        fourcc: MJPG
+        backend: dshow
+        save_images: true
+        image_format: jpg
+      - camera_index: 1
+        topic_name: camera/wrist_left/image_raw
+        arm_id: 1
+        width: 640
+        height: 480
+        fps: 30
+        fourcc: MJPG
+        backend: dshow
+        save_images: true
+        image_format: jpg
+      - camera_index: 3
+        topic_name: camera/wrist_right/image_raw
+        arm_id: 3
+        width: 640
+        height: 480
+        fps: 30
+        fourcc: YUY2
+        backend: dshow
+        save_images: true
+        image_format: jpg

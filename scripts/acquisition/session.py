@@ -54,7 +54,7 @@ class AcquisitionSession:
     def __init__(self, config: SessionConfig):
         self.config = config
         self.session_name = config.session_name or self._default_session_name()
-        self.session_dir = Path(config.base_dir) / self.session_name
+        self.session_dir = Path(config.base_dir).resolve() / self.session_name
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
         clock_cfg = ClockConfig(
@@ -250,7 +250,7 @@ class AcquisitionSession:
 
         source_dir = self.session_dir / source.name
         if isinstance(source, USBCameraSource):
-            return USBCameraWriter(source.name, source_dir)
+            return USBCameraWriter(source.name, source_dir, image_format=source.config.image_format)
         if isinstance(source, USBMultiCameraSource):
             return USBMultiCameraWriter(source.name, source_dir)
         if isinstance(source, EndoscopeSource):

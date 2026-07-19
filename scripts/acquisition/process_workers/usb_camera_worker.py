@@ -87,6 +87,7 @@ def capture_loop(
     stop_event: threading.Event,
     fps: int,
     ready_path: Path,
+    clock_offset_ns: int,
 ) -> None:
     """Read frames from the camera at the requested rate and enqueue them."""
     _set_capture_thread_priority()
@@ -107,9 +108,10 @@ def capture_loop(
             logger.warning('Frame read failed, exiting capture loop')
             break
 
-        arrival_ns = time.time_ns()
+        pc_arrival_ns = time.time_ns()
+        timestamp_ns = pc_arrival_ns + clock_offset_ns
         try:
-            frame_queue.put((frame_idx, arrival_ns, frame), timeout=0.5)
+            frame_queue.put((frame_idx, timestamp_ns, pc_arrival_ns, frame), timeout=0.5)
         except queue.Full:
             logger.warning('Writer queue full, dropping frame %d', frame_idx)
         frame_idx += 1
@@ -128,26 +130,35 @@ def writer_loop(
     metadata_path = out_dir / 'metadata.csv'
     with open(metadata_path, 'w', newline='', encoding='utf-8-sig') as meta_file:
         writer = csv.writer(meta_file)
-        writer.writerow(['index', 'timestamp_ns', 'timestamp_beijing', 'filename', 'width', 'height'])
+        writer.writerow([
+            'index', 'timestamp_ns', 'pc_arrival_ns',
+            'timestamp_beijing', 'filename', 'width', 'height',
+        ])
         written = 0
 
         while True:
             try:
-                frame_idx, arrival_ns, frame = frame_queue.get(timeout=0.1)
+                frame_idx, timestamp_ns, pc_arrival_ns, frame = frame_queue.get(timeout=0.1)
             except queue.Empty:
                 if stop_event.is_set() and frame_queue.empty():
                     break
                 continue
 
-            filename = f'{source_name}_{frame_idx:08d}_{arrival_ns}.{image_format}'
+            filename = f'{source_name}_{frame_idx:08d}_{timestamp_ns}.{image_format}'
             filepath = out_dir / filename
-            if image_format.lower() in ('png', '.png'):
+            fmt = image_format.lower().lstrip('.')
+            if fmt == 'png':
                 cv2.imwrite(str(filepath), frame, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+            elif fmt in ('jpg', 'jpeg'):
+                cv2.imwrite(str(filepath), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
             else:
                 cv2.imwrite(str(filepath), frame)
 
-            beijing_str = ns_to_beijing_iso8601(arrival_ns)
-            writer.writerow([frame_idx, arrival_ns, beijing_str, filename, actual_w, actual_h])
+            beijing_str = ns_to_beijing_iso8601(timestamp_ns)
+            writer.writerow([
+                frame_idx, timestamp_ns, pc_arrival_ns,
+                beijing_str, filename, actual_w, actual_h,
+            ])
             written += 1
 
         logger.info('Writer finished. Wrote %d frames to %s', written, out_dir)
@@ -171,6 +182,8 @@ def main() -> None:
     parser.add_argument('--duration', type=float, default=None,
                         help='If set, stop after N seconds')
     parser.add_argument('--image-format', type=str, default='png')
+    parser.add_argument('--clock-offset-ns', type=int, default=0,
+                        help='Offset added to pc_arrival_ns to align with a master clock')
     parser.add_argument('--stop-file', type=str, default='.stop',
                         help='Filename that signals the worker to stop')
     parser.add_argument('--ready-file', type=str, default='.ready',
@@ -218,7 +231,7 @@ def main() -> None:
 
     capture_thread = threading.Thread(
         target=capture_loop,
-        args=(cap, frame_queue, stop_event, args.fps, ready_path),
+        args=(cap, frame_queue, stop_event, args.fps, ready_path, args.clock_offset_ns),
         name='worker-capture',
         daemon=True,
     )

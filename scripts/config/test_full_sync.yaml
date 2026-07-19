@@ -1,0 +1,51 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  # TwinCAT robot pose (1 kHz) - uses unified clock via PC arrival timestamp.
+  - type: twincat
+    name: robot_pose
+    topic_name: robot/pose
+    ams_net_id: '169.254.226.99.1.1'
+    ams_port: 851
+    ip_address: '192.168.22.22'
+    cycle_period_ms: 1.0
+    selected_arm: 1
+    timestamp_mode: pc_arrival
+
+  # Three USB cameras opened sequentially in one thread (DSHOW, 640x480).
+  # This combination is stable on the current hardware.
+  - type: usb_multi_camera
+    name: all_cameras
+    configs:
+      - camera_index: 0
+        topic_name: camera/endoscope/image_raw
+        arm_id: 2
+        width: 640
+        height: 480
+        fps: 30
+        fourcc: MJPG
+        backend: dshow
+        save_images: true
+        image_format: png
+      - camera_index: 1
+        topic_name: camera/wrist_left/image_raw
+        arm_id: 1
+        width: 640
+        height: 480
+        fps: 30
+        fourcc: MJPG
+        backend: dshow
+        save_images: true
+        image_format: png
+      - camera_index: 3
+        topic_name: camera/wrist_right/image_raw
+        arm_id: 3
+        width: 640
+        height: 480
+        fps: 30
+        fourcc: YUY2
+        backend: dshow
+        save_images: true
+        image_format: png

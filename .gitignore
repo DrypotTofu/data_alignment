@@ -5,12 +5,15 @@ coarse_alignment_data/
 
 # Generated session outputs
 scripts/sessions/
+sessions/
 scripts/capture/
 scripts/multi_capture/
+camera_test_frames/
 *.png
 *.jpg
 *.mp4
 *.avi
+*.yaml.bak
 
 # Python
 __pycache__/

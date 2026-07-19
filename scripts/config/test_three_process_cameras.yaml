@@ -1,0 +1,44 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  # Endoscope (Hikvision via HDMI->USB capture card, LCC5046B).
+  - type: process_camera
+    name: camera_endoscope
+    camera_index: 0
+    topic_name: camera/endoscope/image_raw
+    arm_id: 2
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    backend: dshow
+    image_format: png
+
+  # Left wrist camera (Endoskill).
+  - type: process_camera
+    name: camera_wrist_left
+    camera_index: 1
+    topic_name: camera/wrist_left/image_raw
+    arm_id: 1
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: MJPG
+    backend: dshow
+    image_format: png
+
+  # Right wrist camera (Endoskill).
+  # Different FOURCC avoids the identical-device DirectShow conflict.
+  - type: process_camera
+    name: camera_wrist_right
+    camera_index: 3
+    topic_name: camera/wrist_right/image_raw
+    arm_id: 3
+    width: 640
+    height: 480
+    fps: 30
+    fourcc: YUY2
+    backend: dshow
+    image_format: png

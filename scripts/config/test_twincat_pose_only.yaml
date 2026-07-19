@@ -1,0 +1,20 @@
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+sources:
+  - type: twincat
+    name: robot_pose
+    topic_name: robot/pose
+    ams_net_id: '169.254.226.99.1.1'
+    ams_port: 851
+    ip_address: '192.168.22.22'
+    cycle_period_ms: 1.0
+    selected_arm: 1
+    timestamp_mode: pc_arrival
+    symbols:
+      armframe_positions: 'Sir_RunRunShaw_Database.EndEffector_Coordinate_ArmFrame'
+      orientations: 'Sir_RunRunShaw_Database.EndEffector_Orientation'
+    symbol_shapes:
+      armframe_positions: [4, 3]
+      orientations: [4, 4]

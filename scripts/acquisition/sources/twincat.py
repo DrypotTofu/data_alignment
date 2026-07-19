@@ -44,13 +44,16 @@ Python side (pyads)
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pyads
+
 from ..base_source import DataSample, DataSource
-from ..timestamp import UnifiedTimestamp
+from ..timestamp import TimestampSource, UnifiedTimestamp
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +87,43 @@ class TwinCATConfig:
     symbol_shapes: dict[str, tuple[int, ...] | list[int]] | None = None
     selected_arm: int = 1  # which arm (1..4) to record as the primary pose
     # How to timestamp TwinCAT samples:
-    #   'twincat'    -> read a PLC timestamp symbol (not available on this robot)
+    #   'twincat'    -> use PLC task CycleCount * CycleTime (stable PLC time axis)
     #   'pc_arrival' -> use PC time when ADS response arrives (recommended)
     #   'pc_cycle'   -> use PC time at start of each read cycle
     timestamp_mode: str = 'pc_arrival'
+    # PLC symbol that exposes the task cycle counter. On this robot the
+    # standard TwinCAT system info variable '_TaskInfo[1].CycleCount' is
+    # available and increments once per PLC task cycle (1 ms).
+    twincat_timestamp_symbol: str = (
+        'TwinCAT_SystemInfoVarList._TaskInfo[1].CycleCount'
+    )
+    # PLC symbol that exposes the task cycle time in 100 ns units. Used once
+    # at startup to convert CycleCount into nanoseconds.
+    twincat_timestamp_cycle_time_symbol: str = (
+        'TwinCAT_SystemInfoVarList._TaskInfo[1].CycleTime'
+    )
+    # Optional override for CycleCount -> time conversion. If set, the source
+    # skips reading the CycleTime symbol. 1 kHz task -> 1.0 cycles/ms.
+    twincat_timestamp_cycles_per_ms: float | None = None
+    # When the session clock_source is 'twincat_master', the source estimates
+    # host->TwinCAT offset from each 'twincat' sample and updates the shared
+    # clock offset. This alpha controls an exponential moving average
+    # (0 = disable update, 1 = no smoothing). Default 0.05 gives a stable
+    # offset while still tracking slow drift.
+    twincat_master_sync_alpha: float = 0.05
+    # If True, measure the ADS request/response RTT around each read and use
+    # t_recv - RTT/2 as the PC arrival time. This reduces short-term jitter
+    # in the host->TwinCAT offset estimate caused by variable ADS latency.
+    use_rtt_correction: bool = False
+    # If True, include both PC-axis and PLC-axis timestamps in the sample
+    # metadata as 'timestamp_ns_pc' and 'timestamp_ns_plc'. The main
+    # 'timestamp_ns' field still follows timestamp_mode for compatibility.
+    output_dual_timestamps: bool = False
+    # Number of parallel ADS connections to open. Each connection runs in its
+    # own thread and polls the same symbols. The resulting samples are merged
+    # into the output queue, increasing effective sample rate at the cost of
+    # duplicated CycleCounts. Default 1 preserves the original behaviour.
+    num_connections: int = 1
 
     def __post_init__(self):
         if self.symbols is None:
@@ -128,55 +164,174 @@ class TwinCATSource(DataSource):
         self._missed_cycles = 0
         self._consecutive_errors = 0
         self._samples_read = 0
+        # Cached PLC cycle time in nanoseconds; populated on first read when
+        # timestamp_mode == 'twincat' and no override is configured.
+        self._twincat_cycle_time_ns: int | None = None
+        # Protects counters and the shared master clock offset update when
+        # multiple ADS connections run in parallel.
+        self._lock = threading.Lock()
+        self._worker_threads: list[threading.Thread] = []
+        self._connections: list[pyads.Connection] = []
 
     @property
     def name(self) -> str:
         return self.config.topic_name.replace('/', '_')
 
-    def _read_arrays(self, plc) -> dict[str, list[Any]]:
+    def _read_arrays(self, plc) -> dict[str, Any]:
         """Read all configured ADS symbols and reshape them."""
         names = list(self.config.symbols.values())
+        if self.config.timestamp_mode == 'twincat' or self.config.output_dual_timestamps:
+            names.append(self.config.twincat_timestamp_symbol)
         raw = plc.read_list_by_name(names)
-        out: dict[str, list[Any]] = {}
+        out: dict[str, Any] = {}
         for key, ads_name in self.config.symbols.items():
             shape = self.config.symbol_shapes[key]
             out[key] = _reshape(raw[ads_name], shape)
+        if self.config.timestamp_mode == 'twincat' or self.config.output_dual_timestamps:
+            out['__twincat_cycle_count'] = raw[self.config.twincat_timestamp_symbol]
         return out
 
-    def _build_sample(self, cycle_start_ns: int, arrays: dict[str, list[Any]]) -> DataSample:
-        """Construct a DataSample for the selected arm."""
+    def _ensure_twincat_cycle_time_ns(self, plc) -> int:
+        """Return (and cache) the PLC task cycle time in nanoseconds."""
+        if self._twincat_cycle_time_ns is not None:
+            return self._twincat_cycle_time_ns
+        if self.config.twincat_timestamp_cycles_per_ms is not None:
+            self._twincat_cycle_time_ns = int(1_000_000.0 / self.config.twincat_timestamp_cycles_per_ms)
+        else:
+            raw = plc.read_by_name(
+                self.config.twincat_timestamp_cycle_time_symbol,
+                plc_datatype=pyads.PLCTYPE_UDINT,
+            )
+            # TwinCAT CycleTime is expressed in 100 ns units.
+            self._twincat_cycle_time_ns = int(raw) * 100
+        return self._twincat_cycle_time_ns
+
+    def _update_twincat_master_offset(
+        self,
+        twincat_ts_ns: int,
+        pc_arrival_ns: int,
+        conn_id: int = 0,
+    ) -> None:
+        """Update the shared clock offset when TwinCAT is the master clock.
+
+        This makes camera frame timestamps (which call ``self.clock.now_ns()``)
+        land on the same PLC time axis as the TwinCAT samples.
+
+        Only connection 0 performs the update to avoid redundant work and
+        reduce lock contention when multiple connections are active.
+        """
+        if self.clock.config.source != TimestampSource.TWINCAT_MASTER:
+            return
+        if conn_id != 0:
+            return
+        alpha = self.config.twincat_master_sync_alpha
+        instant_offset = twincat_ts_ns - pc_arrival_ns
+        with self._lock:
+            current_offset = self.clock.config.offset_ns
+            if alpha <= 0.0:
+                self.clock.config.offset_ns = instant_offset
+            else:
+                self.clock.config.offset_ns = int(
+                    alpha * instant_offset + (1.0 - alpha) * current_offset
+                )
+
+    def _build_sample(
+        self,
+        cycle_start_ns: int,
+        arrays: dict[str, Any],
+        plc: pyads.Connection,
+        t_send_ns: int,
+        t_recv_ns: int,
+        conn_id: int = 0,
+    ) -> DataSample:
+        """Construct a DataSample for the selected arm.
+
+        Only the symbols configured in ``self.config.symbols`` are required;
+        missing fields are omitted from the sample. This allows users to read
+        only the pose subset (position + orientation) for higher ADS rates.
+
+        ``cycle_start_ns`` and the internally captured ``pc_arrival_ns`` are
+        raw host PC wall times (``time.time_ns()``). The final
+        ``timestamp_ns`` is expressed in the configured master clock domain:
+        when ``clock_source == 'twincat_master'`` the source adds the shared
+        offset so that video frames and TwinCAT poses share the PLC time axis.
+
+        ``t_send_ns`` and ``t_recv_ns`` bracket the ADS read; when RTT
+        correction is enabled, ``pc_arrival_ns`` is approximated as
+        ``t_recv_ns - RTT/2`` to reduce offset-estimate jitter.
+        """
         arm_idx = self.config.selected_arm - 1
-        joints = arrays['joint_angles'][arm_idx]
-        arm_pos = arrays['armframe_positions'][arm_idx]
-        scope_pos = arrays['scopeframe_positions'][arm_idx]
-        orient = arrays['orientations'][arm_idx]
-        inst_type = arrays['instrument_types'][arm_idx]
+        has = {k: k in arrays for k in [
+            'joint_angles', 'armframe_positions', 'scopeframe_positions',
+            'orientations', 'instrument_types']}
 
+        rtt_ns = t_recv_ns - t_send_ns
+        # Raw PC wall time at response arrival. Kept raw in metadata so post-
+        # processing can see network/ADS latency.
+        pc_arrival_ns = t_recv_ns
+        if self.config.use_rtt_correction:
+            # Approximate the PC time at which the PLC sample was taken,
+            # assuming symmetric request/response latency.
+            pc_arrival_ns = t_recv_ns - rtt_ns // 2
+
+        master_offset_ns = self.clock.config.offset_ns
+
+        # Compute the PLC-axis timestamp whenever CycleCount is available.
+        timestamp_ns_plc: int | None = None
+        if '__twincat_cycle_count' in arrays:
+            cycle_count = arrays['__twincat_cycle_count']
+            cycle_time_ns = self._ensure_twincat_cycle_time_ns(plc)
+            timestamp_ns_plc = int(cycle_count) * cycle_time_ns
+
+        # Raw PC-axis timestamp. For pc_cycle this is the cycle start; otherwise
+        # it is the (possibly RTT-corrected) response arrival time.
+        if self.config.timestamp_mode == 'pc_cycle':
+            timestamp_ns_pc = cycle_start_ns
+        else:
+            timestamp_ns_pc = pc_arrival_ns
+
+        # Main timestamp follows the configured mode for backward compatibility.
         if self.config.timestamp_mode == 'pc_arrival':
-            sample_ts_ns = self.clock.now_ns()
+            sample_ts_ns = timestamp_ns_pc + master_offset_ns
         elif self.config.timestamp_mode == 'pc_cycle':
-            sample_ts_ns = cycle_start_ns
-        else:  # 'twincat' fallback when no PLC timestamp symbol exists
-            sample_ts_ns = cycle_start_ns
+            sample_ts_ns = timestamp_ns_pc + master_offset_ns
+        elif self.config.timestamp_mode == 'twincat':
+            sample_ts_ns = timestamp_ns_plc
+            self._update_twincat_master_offset(sample_ts_ns, pc_arrival_ns, conn_id)
+        else:
+            raise ValueError(
+                f"Unsupported timestamp_mode: {self.config.timestamp_mode}"
+            )
 
-        data: dict[str, Any] = {
-            'arm': self.config.selected_arm,
-            'instrument_type': inst_type,
-            'position_x': arm_pos[0],
-            'position_y': arm_pos[1],
-            'position_z': arm_pos[2],
-            'orientation_w': orient[0],
-            'orientation_x': orient[1],
-            'orientation_y': orient[2],
-            'orientation_z': orient[3],
-            'scope_position_x': scope_pos[0],
-            'scope_position_y': scope_pos[1],
-            'scope_position_z': scope_pos[2],
-        }
-        for i, v in enumerate(joints, start=1):
-            data[f'joint_{i}'] = v
+        data: dict[str, Any] = {'arm': self.config.selected_arm}
 
-        metadata = {
+        if has['instrument_types']:
+            data['instrument_type'] = arrays['instrument_types'][arm_idx]
+
+        if has['armframe_positions']:
+            arm_pos = arrays['armframe_positions'][arm_idx]
+            data['position_x'] = arm_pos[0]
+            data['position_y'] = arm_pos[1]
+            data['position_z'] = arm_pos[2]
+
+        if has['orientations']:
+            orient = arrays['orientations'][arm_idx]
+            data['orientation_w'] = orient[0]
+            data['orientation_x'] = orient[1]
+            data['orientation_y'] = orient[2]
+            data['orientation_z'] = orient[3]
+
+        if has['scopeframe_positions']:
+            scope_pos = arrays['scopeframe_positions'][arm_idx]
+            data['scope_position_x'] = scope_pos[0]
+            data['scope_position_y'] = scope_pos[1]
+            data['scope_position_z'] = scope_pos[2]
+
+        if has['joint_angles']:
+            for i, v in enumerate(arrays['joint_angles'][arm_idx], start=1):
+                data[f'joint_{i}'] = v
+
+        metadata: dict[str, Any] = {
             'timestamp_mode': self.config.timestamp_mode,
             'ams_net_id': self.config.ams_net_id,
             'ams_port': self.config.ams_port,
@@ -184,7 +339,20 @@ class TwinCATSource(DataSource):
             'selected_arm': self.config.selected_arm,
             'orientation_order': 'wxyz (to be confirmed)',
             'pc_cycle_start_ns': cycle_start_ns,
+            'pc_arrival_ns': t_recv_ns,
+            'rtt_ns': rtt_ns,
+            'master_offset_ns': master_offset_ns,
+            'conn_id': conn_id,
         }
+        if self.config.use_rtt_correction:
+            metadata['pc_arrival_corrected_ns'] = pc_arrival_ns
+        if self.config.timestamp_mode == 'twincat' or self.config.output_dual_timestamps:
+            metadata['twincat_cycle_count'] = int(arrays['__twincat_cycle_count'])
+            metadata['twincat_cycle_time_ns'] = self._twincat_cycle_time_ns
+        if self.config.output_dual_timestamps:
+            metadata['timestamp_ns_pc'] = timestamp_ns_pc
+            if timestamp_ns_plc is not None:
+                metadata['timestamp_ns_plc'] = timestamp_ns_plc
 
         return DataSample(
             timestamp_ns=sample_ts_ns,
@@ -193,52 +361,70 @@ class TwinCATSource(DataSource):
             metadata=metadata,
         )
 
-    def _acquire_loop(self) -> None:
-        import pyads
+    def _open_connection(self, conn_id: int) -> pyads.Connection:
+        """Open a single ADS connection and log its id."""
+        plc = pyads.Connection(
+            self.config.ams_net_id,
+            self.config.ams_port,
+            self.config.ip_address,
+        )
+        plc.open()
+        logger.info(
+            'TwinCAT ADS connection %d/%d connected to %s:%d via %s',
+            conn_id + 1,
+            self.config.num_connections,
+            self.config.ams_net_id,
+            self.config.ams_port,
+            self.config.ip_address,
+        )
+        return plc
 
+    def _connection_worker(self, conn_id: int) -> None:
+        """Acquisition loop for one parallel ADS connection."""
         period_s = self.config.cycle_period_ms / 1000.0
         plc: pyads.Connection | None = None
+        local_errors = 0
 
         while not self._stop_event.is_set():
-            # (Re)open ADS connection if needed.
             if plc is None:
                 try:
-                    plc = pyads.Connection(
-                        self.config.ams_net_id,
-                        self.config.ams_port,
-                        self.config.ip_address,
-                    )
-                    plc.open()
-                    logger.info(
-                        'TwinCAT ADS connected to %s:%d via %s',
-                        self.config.ams_net_id,
-                        self.config.ams_port,
-                        self.config.ip_address,
-                    )
-                    self._consecutive_errors = 0
+                    plc = self._open_connection(conn_id)
+                    local_errors = 0
                 except Exception as exc:
-                    self._consecutive_errors += 1
+                    local_errors += 1
+                    with self._lock:
+                        self._consecutive_errors += 1
                     logger.error(
-                        'Failed to open ADS connection (attempt %d): %s',
-                        self._consecutive_errors,
+                        'Connection %d: failed to open ADS (attempt %d): %s',
+                        conn_id,
+                        local_errors,
                         exc,
                     )
                     time.sleep(min(period_s * 5, 1.0))
                     continue
 
-            cycle_start_ns = self.clock.now_ns()
+            cycle_start_ns = time.time_ns()
             try:
+                t_send_ns = time.time_ns()
                 arrays = self._read_arrays(plc)
-                sample = self._build_sample(cycle_start_ns, arrays)
+                t_recv_ns = time.time_ns()
+                sample = self._build_sample(
+                    cycle_start_ns, arrays, plc, t_send_ns, t_recv_ns, conn_id
+                )
                 self._put_sample(sample)
-                self._samples_read += 1
-                self._consecutive_errors = 0
+                with self._lock:
+                    self._samples_read += 1
+                    self._consecutive_errors = 0
+                local_errors = 0
             except Exception as exc:
-                self._consecutive_errors += 1
-                self._missed_cycles += 1
+                local_errors += 1
+                with self._lock:
+                    self._consecutive_errors += 1
+                    self._missed_cycles += 1
                 logger.error(
-                    'ADS read error (consecutive %d): %s',
-                    self._consecutive_errors,
+                    'Connection %d: ADS read error (consecutive %d): %s',
+                    conn_id,
+                    local_errors,
                     exc,
                 )
                 try:
@@ -249,8 +435,7 @@ class TwinCATSource(DataSource):
                 time.sleep(min(period_s * 5, 1.0))
                 continue
 
-            # Sleep until next cycle, guarding against overshoot.
-            elapsed_s = (self.clock.now_ns() - cycle_start_ns) / 1e9
+            elapsed_s = (time.time_ns() - cycle_start_ns) / 1e9
             sleep_s = period_s - elapsed_s
             if sleep_s > 0:
                 time.sleep(sleep_s)
@@ -259,7 +444,31 @@ class TwinCATSource(DataSource):
             try:
                 plc.close()
             except Exception as exc:
-                logger.warning('Error closing ADS connection: %s', exc)
+                logger.warning(
+                    'Connection %d: error closing ADS connection: %s',
+                    conn_id,
+                    exc,
+                )
+
+    def _acquire_loop(self) -> None:
+        """Start and supervise parallel ADS connection workers."""
+        num = max(1, self.config.num_connections)
+        self._worker_threads = []
+        self._connections = []
+
+        for conn_id in range(num):
+            t = threading.Thread(
+                target=self._connection_worker,
+                args=(conn_id,),
+                name=f'{self.name}-ads-{conn_id}',
+                daemon=True,
+            )
+            t.start()
+            self._worker_threads.append(t)
+
+        # Wait until stop is requested.
+        for t in self._worker_threads:
+            t.join()
 
     def get_summary(self) -> dict[str, Any]:
         summary = super().get_summary()
@@ -273,6 +482,7 @@ class TwinCATSource(DataSource):
             'symbol_shapes': self.config.symbol_shapes,
             'selected_arm': self.config.selected_arm,
             'timestamp_mode': self.config.timestamp_mode,
+            'num_connections': self.config.num_connections,
             'samples_read': self._samples_read,
             'missed_cycles': self._missed_cycles,
         })

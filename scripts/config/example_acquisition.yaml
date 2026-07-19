@@ -10,12 +10,17 @@ session_name: null  # null -> auto-generate from current UTC time
 
 # Unified timestamp source.
 #   host_realtime   : use time.time_ns() (default, easiest)
-#   twincat_master  : host time shifted to align with TwinCAT clock
+#   twincat_master  : host time shifted to align with TwinCAT PLC time axis.
+#                     Requires a TwinCAT source with timestamp_mode=twincat.
+#                     Camera frames will share the same PLC CycleCount axis.
 #   manual_offset   : host time + clock_offset_ns
 #
 # If you configure NTP between PC and TwinCAT, use host_realtime and both
 # clocks will be in the same domain. Verify with:
 #   python test\check_clock_sync.py --ams-net-id 192.168.1.100.1.1
+#
+# Without NTP, set clock_source: twincat_master and use timestamp_mode: twincat
+# to make video and robot poses share the PLC time axis.
 clock_source: host_realtime
 clock_offset_ns: 0
 

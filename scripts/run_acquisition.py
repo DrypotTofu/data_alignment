@@ -86,6 +86,23 @@ def build_source_from_config(source_cfg: dict[str, Any]):
             symbol_shapes=source_cfg.get('symbol_shapes'),
             selected_arm=source_cfg.get('selected_arm', 1),
             timestamp_mode=source_cfg.get('timestamp_mode', 'pc_arrival'),
+            twincat_timestamp_symbol=source_cfg.get(
+                'twincat_timestamp_symbol',
+                'TwinCAT_SystemInfoVarList._TaskInfo[1].CycleCount',
+            ),
+            twincat_timestamp_cycle_time_symbol=source_cfg.get(
+                'twincat_timestamp_cycle_time_symbol',
+                'TwinCAT_SystemInfoVarList._TaskInfo[1].CycleTime',
+            ),
+            twincat_timestamp_cycles_per_ms=source_cfg.get(
+                'twincat_timestamp_cycles_per_ms'
+            ),
+            twincat_master_sync_alpha=source_cfg.get(
+                'twincat_master_sync_alpha', 0.05
+            ),
+            use_rtt_correction=source_cfg.get('use_rtt_correction', False),
+            output_dual_timestamps=source_cfg.get('output_dual_timestamps', False),
+            num_connections=source_cfg.get('num_connections', 1),
         )
         return TwinCATSource(config=cfg)
 

@@ -93,38 +93,36 @@ w32tm /resync
 
 ## 方案 C：只用 TwinCAT 时间戳（不依赖 NTP）
 
-如果暂时不想配 NTP，可以让 TwinCAT 在 PLC 里暴露 `MAIN.timestamp_ns`，采集框架直接用它作为样本时间戳。
+如果暂时不想配 NTP，可以直接使用 TwinCAT 任务周期计数器作为稳定的 PLC 端时间轴。该机器人 PLC 的标准系统信息变量 `_TaskInfo[1].CycleCount` 每个 PLC 任务周期（1 ms）递增一次，配合 `_TaskInfo[1].CycleTime` 即可换算成时间。
 
-### PLC 端
-
-```iecst
-PROGRAM MAIN
-VAR
-    timestamp_ns : ULINT;
-    fbSystemTime : FB_LocalSystemTime;
-END_VAR
-
-fbSystemTime(bEnable := TRUE);
-IF fbSystemTime.bValid THEN
-    // 把 TwinCAT 系统时间转成 Unix-epoch ns
-    timestamp_ns := ...;  // 需按实际时间格式转换
-END_IF
-```
-
-### Python 端
+### 配置方式
 
 ```yaml
 sources:
   - type: twincat
+    name: robot_poses
     timestamp_mode: twincat
-    symbols:
-      timestamp_ns: MAIN.timestamp_ns
+    # 以下三项通常使用默认值即可：
+    # twincat_timestamp_symbol: TwinCAT_SystemInfoVarList._TaskInfo[1].CycleCount
+    # twincat_timestamp_cycle_time_symbol: TwinCAT_SystemInfoVarList._TaskInfo[1].CycleTime
+    # twincat_timestamp_cycles_per_ms: 1.0   # 仅在不想读取 CycleTime 时覆盖
 ```
 
-框架会同时记录：
-- `timestamp_ns`：TwinCAT 原始时间戳
-- `pc_receive_ns`：PC 收到数据的时间
-- `twincat_to_pc_offset_ns`：两者偏移，用于事后对齐
+### 输出字段
+
+每个样本的 `timestamp_ns` 为：
+
+```
+timestamp_ns = CycleCount * CycleTime_ns
+```
+
+同时 metadata 中会保留：
+- `twincat_cycle_count`：原始 PLC 周期计数
+- `twincat_cycle_time_ns`：PLC 任务周期（实测为 1 000 000 ns，即 1 ms）
+- `pc_arrival_ns`：PC 收到 ADS 响应的时间
+- `pc_cycle_start_ns`：本周期开始时 PC 时间
+
+这样即使 PC 与 TwinCAT 时钟没有对齐，位姿数据自身也有一条稳定、单调递增的 PLC 时间轴，适合与 30 FPS 视频帧做事后对齐。
 
 ---
 
@@ -178,3 +176,113 @@ sources:
 ```
 
 这样即使 NTP 稍有漂移，TwinCAT 时间戳也是最准的。
+
+### 让视频时间戳也使用 PLC 时间轴
+
+如果希望相机/内窥镜帧的时间戳与 TwinCAT 位姿直接共享同一轴，可把 PLC 设为主时钟：
+
+```yaml
+clock_source: twincat_master
+clock_offset_ns: 0
+
+sources:
+  - type: twincat
+    name: robot_poses
+    timestamp_mode: twincat
+    twincat_master_sync_alpha: 0.05
+    # ...
+
+  - type: usb_camera
+    name: camera_wrist_left
+    # ...
+```
+
+工作原理：
+1. TwinCAT 源每个样本计算 `instant_offset = twincat_timestamp_ns - pc_arrival_ns`。
+2. 通过 EMA（默认 `alpha=0.05`）更新共享的 `clock_offset_ns`。
+3. 所有其他源调用 `clock.now_ns()` 时返回 `time.time_ns() + offset_ns`，即落在 PLC 时间轴上。
+
+结果：
+- 视频 `timestamp_ns` 与位姿 `timestamp_ns` 都是 PLC 相对时间（从 PLC 启动起的纳秒数）。
+- 每个样本的 metadata 仍保留原始 `pc_arrival_ns`，便于事后核对网络延迟。
+
+> 注意：该偏移是 TwinCAT 启动后的相对时间，不是 Unix epoch 绝对时间。如果需要绝对时间，可再记录第一个样本的 PC 时间作为 epoch 偏移。
+
+### 同时保留 PC 和 PLC 两种时间戳
+
+如果希望每个 TwinCAT 样本的 metadata 中同时有 PC 时间戳和 PLC 时间戳，开启双时间戳输出：
+
+```yaml
+  - type: twincat
+    name: robot_poses
+    timestamp_mode: twincat
+    output_dual_timestamps: true
+```
+
+输出字段：
+- `timestamp_ns`：由 `timestamp_mode` 决定的主时间戳
+- `timestamp_ns_pc`：PC wall time（`pc_cycle` 模式下为 cycle 开始时刻，其他为响应到达时刻）
+- `timestamp_ns_plc`：PLC 轴时间戳（`CycleCount * CycleTime_ns`）
+- `pc_arrival_ns`：原始 PC 响应到达时间
+
+这样即使主时间戳选了 PLC 轴，事后也仍然可以直接拿到对应的 PC 时间，便于与未同步的外部数据对比。
+
+### 提高位姿采样率：多 ADS 连接
+
+单个 ADS 连接在本项目机器人上大约能到 260 Hz。如果需要更高的位姿密度（例如事后做运动学插值），可以开启多个并行 ADS 连接：
+
+```yaml
+  - type: twincat
+    name: robot_poses
+    timestamp_mode: twincat
+    num_connections: 2   # 或 4
+```
+
+实测结果（3 秒 benchmark）：
+
+| 连接数 | 总样本率 | 唯一 CycleCount | 重复数 |
+|--------|---------|----------------|--------|
+| 1      | ~260 Hz | ~778            | 0      |
+| 2      | ~620 Hz | ~1115           | ~748   |
+| 4      | ~1.3 kHz| ~1217           | ~2725  |
+
+说明：
+- PLC 每 1 ms 才更新一次 CycleCount，所以多连接的主要作用是**提高采样密度**，而不是获取更多唯一周期。
+- 重复样本会进入同一个队列/CSV，事后可以通过 `twincat_cycle_count` 去重或插值。
+- 对于 30 FPS 视频（33 ms/帧），**1 个连接已经足够**；只有需要高密度位姿时才提高连接数。
+- 每个连接有独立的 ADS 会话，会增加 PLC 和网络的负载，不建议超过 4 个。
+
+### 进一步降低在线 offset 抖动：RTT 校正
+
+ADS 往返延迟每次不同，会让 `instant_offset` 估计带有短期噪声。开启 RTT 校正后，源会用 `t_recv - RTT/2` 作为 PC 到达时间：
+
+```yaml
+  - type: twincat
+    name: robot_poses
+    timestamp_mode: twincat
+    twincat_master_sync_alpha: 0.05
+    use_rtt_correction: true
+```
+
+metadata 会额外记录 `rtt_ns` 和 `pc_arrival_corrected_ns`，便于事后分析。
+
+### 消除长期晶振漂移：事后校准
+
+PC 与 PLC 晶振频率不完全相同，长时间运行后会有累积漂移。采集结束后，可用校准脚本把视频帧重新映射到精确的 PLC 轴：
+
+```powershell
+python scripts/tools/calibrate_temporal_drift.py `
+    --twincat sessions/my_session/robot_poses/twincat_poses.csv `
+    --video-metadata sessions/my_session/camera_wrist_left/metadata.csv `
+    --output sessions/my_session/camera_wrist_left/metadata_calibrated.csv
+```
+
+脚本会：
+1. 根据 TwinCAT CSV 拟合 `twincat_timestamp_ns = k * pc_arrival_ns + b`。
+2. 用该模型重新计算每帧视频时间戳。
+3. 输出新的 `metadata_calibrated.csv`，原 `timestamp_ns` 保留为 `timestamp_ns_original`。
+
+建议：
+- **短时实验（<30 min）**：`twincat_master` 已足够。
+- **长时实验**：`twincat_master` + `use_rtt_correction` + 事后 `calibrate_temporal_drift.py`。
+- **需要绝对时间**：再叠加 NTP。
