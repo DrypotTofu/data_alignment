@@ -6,7 +6,7 @@ title VLGP 手动数据采集
 set PYTHON=C:\Users\11764\.conda\envs\SurgDataColl\python.exe
 set PROJECT_ROOT=D:\AI4Surg\DataCollection\data_alignment
 set SCRIPT=%PROJECT_ROOT%\scripts\tools\manual_acquisition.py
-set CONFIG=%PROJECT_ROOT%\scripts\config\end_to_end_1min_test.yaml
+set CONFIG=%PROJECT_ROOT%\scripts\config\default.yaml
 set LOG=%PROJECT_ROOT%\scripts\tools\start_manual_acquisition.log
 
 cd /d "%PROJECT_ROOT%"
@@ -33,4 +33,4 @@ if %EXIT_CODE% neq 0 (
 )
 echo.
 echo 按任意键关闭窗口...
-pause >nul
+pause >/dev/null

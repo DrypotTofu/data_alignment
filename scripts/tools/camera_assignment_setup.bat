@@ -6,7 +6,7 @@ title VLGP 摄像头分配设置 (GUI)
 set PYTHON=C:\Users\11764\.conda\envs\SurgDataColl\python.exe
 set PROJECT_ROOT=D:\AI4Surg\DataCollection\data_alignment
 set SCRIPT=%PROJECT_ROOT%\scripts\tools\camera_assignment_gui.py
-set CONFIG=%PROJECT_ROOT%\scripts\config\end_to_end_1min_test.yaml
+set CONFIG=%PROJECT_ROOT%\scripts\config\default.yaml
 set OUT_DIR=%PROJECT_ROOT%\camera_test_frames
 set LOG=%PROJECT_ROOT%\scripts\tools\camera_assignment_setup.log
 
@@ -35,4 +35,4 @@ if %EXIT_CODE% neq 0 (
 )
 echo.
 echo 按任意键关闭窗口...
-pause >nul
+pause >/dev/null

@@ -5,8 +5,8 @@ Enter to begin recording, then waits for another Enter (or Ctrl-C) to stop.
 Useful when the recording length is not known in advance.
 
 Usage:
-    python tools/manual_acquisition.py --config config/end_to_end_1min_test.yaml
-    python tools/manual_acquisition.py --config config/end_to_end_1min_test.yaml --name my_session
+    python tools/manual_acquisition.py --config config/default.yaml
+    python tools/manual_acquisition.py --config config/default.yaml --name my_session
 """
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def print_status(session: AcquisitionSession, stop_event: threading.Event,
 def main() -> int:
     parser = argparse.ArgumentParser(description='Manual start/stop acquisition')
     parser.add_argument('--config', type=str,
-                        default=str(Path(__file__).parents[1] / 'config' / 'end_to_end_1min_test.yaml'),
+                        default=str(Path(__file__).parents[1] / 'config' / 'default.yaml'),
                         help='Path to YAML config file')
     parser.add_argument('--name', type=str, default=None,
                         help='Override session name')
