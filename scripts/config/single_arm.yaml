@@ -23,6 +23,9 @@ sources:
     scopeframe_positions: Sir_RunRunShaw_Database.EndEffector_Coordinate_ScopeFrame
     orientations: Sir_RunRunShaw_Database.EndEffector_Orientation
     instrument_types: Sir_RunRunShaw_Database.Instrument_Type
+    gripper_angle: Sir_RunRunShaw_Database.Gripper_Angle
+    gripper_signal: Sir_RunRunShaw_Database.Gripper_Signal
+    energy_instrument_status: Sir_RunRunShaw_Database.EnergyInstrument_Status
   symbol_shapes:
     joint_angles:
     - 4
@@ -37,6 +40,12 @@ sources:
     - 4
     - 4
     instrument_types:
+    - 4
+    gripper_angle:
+    - 4
+    gripper_signal:
+    - 4
+    energy_instrument_status:
     - 4
 - type: process_camera
   name: camera_arm_2

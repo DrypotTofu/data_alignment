@@ -18,6 +18,9 @@ Scope project ``TwinCATScope/TwinCAT Project1``):
     Sir_RunRunShaw_Database.EndEffector_Coordinate_ScopeFrame[4][3] : LREAL
     Sir_RunRunShaw_Database.EndEffector_Orientation[4][4]    : LREAL
     Sir_RunRunShaw_Database.Instrument_Type[4]               : INT
+    Sir_RunRunShaw_Database.Gripper_Angle[4]                : LREAL
+    Sir_RunRunShaw_Database.Gripper_Signal[4]               : LREAL
+    Sir_RunRunShaw_Database.EnergyInstrument_Status[4]      : BOOL
 
 TwinCAT ADS route on the PC side
 --------------------------------
@@ -138,6 +141,9 @@ class TwinCATConfig:
                 'scopeframe_positions': 'Sir_RunRunShaw_Database.EndEffector_Coordinate_ScopeFrame',
                 'orientations': 'Sir_RunRunShaw_Database.EndEffector_Orientation',
                 'instrument_types': 'Sir_RunRunShaw_Database.Instrument_Type',
+                'gripper_angle': 'Sir_RunRunShaw_Database.Gripper_Angle',
+                'gripper_signal': 'Sir_RunRunShaw_Database.Gripper_Signal',
+                'energy_instrument_status': 'Sir_RunRunShaw_Database.EnergyInstrument_Status',
             }
         if self.symbol_shapes is None:
             self.symbol_shapes = {
@@ -146,6 +152,9 @@ class TwinCATConfig:
                 'scopeframe_positions': (4, 3),
                 'orientations': (4, 4),
                 'instrument_types': (4,),
+                'gripper_angle': (4,),
+                'gripper_signal': (4,),
+                'energy_instrument_status': (4,),
             }
         # Normalise list shapes from YAML to tuples internally.
         self.symbol_shapes = {
@@ -274,7 +283,8 @@ class TwinCATSource(DataSource):
         arm_id = arm_idx + 1
         has = {k: k in arrays for k in [
             'joint_angles', 'armframe_positions', 'scopeframe_positions',
-            'orientations', 'instrument_types']}
+            'orientations', 'instrument_types',
+            'gripper_angle', 'gripper_signal', 'energy_instrument_status']}
 
         rtt_ns = t_recv_ns - t_send_ns
         # Raw PC wall time at response arrival. Kept raw in metadata so post-
@@ -341,6 +351,17 @@ class TwinCATSource(DataSource):
         if has['joint_angles']:
             for i, v in enumerate(arrays['joint_angles'][arm_idx], start=1):
                 data[f'joint_{i}'] = v
+
+        if has['gripper_angle']:
+            data['gripper_angle'] = arrays['gripper_angle'][arm_idx]
+
+        if has['gripper_signal']:
+            data['gripper_signal'] = arrays['gripper_signal'][arm_idx]
+
+        if has['energy_instrument_status']:
+            data['energy_instrument_status'] = int(
+                arrays['energy_instrument_status'][arm_idx]
+            )
 
         metadata: dict[str, Any] = {
             'timestamp_mode': self.config.timestamp_mode,
