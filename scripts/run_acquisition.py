@@ -103,6 +103,7 @@ def build_source_from_config(source_cfg: dict[str, Any]):
             use_rtt_correction=source_cfg.get('use_rtt_correction', False),
             output_dual_timestamps=source_cfg.get('output_dual_timestamps', False),
             num_connections=source_cfg.get('num_connections', 1),
+            output_all_arms=source_cfg.get('output_all_arms', False),
         )
         return TwinCATSource(config=cfg)
 

@@ -85,6 +85,22 @@ def align_video_to_twincat(
     return alignment_error_ms, valid_mask
 
 
+def _resolve_twincat_path(session_dir: Path, arm_id: int) -> Path | None:
+    """Find the TwinCAT CSV for a given arm.
+
+    Prefers the per-arm output from multi-arm mode
+    (``robot_pose_arm<N>/twincat_poses.csv``), then falls back to the legacy
+    single ``robot_pose/twincat_poses.csv``.
+    """
+    per_arm_path = session_dir / f'robot_pose_arm{arm_id}' / 'twincat_poses.csv'
+    if per_arm_path.exists():
+        return per_arm_path
+    legacy_path = session_dir / 'robot_pose' / 'twincat_poses.csv'
+    if legacy_path.exists():
+        return legacy_path
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description='Verify video/TwinCAT alignment')
     parser.add_argument('--session', type=Path, required=True,
@@ -92,18 +108,6 @@ def main():
     args = parser.parse_args()
 
     session_dir = args.session
-    twincat_path = session_dir / 'robot_pose' / 'twincat_poses.csv'
-
-    print('=== Fitting PLC-PC drift model ===')
-    k, b, diag = fit_plc_pc_model(twincat_path)
-    print(f"  k                 = {diag['k']:.12f}")
-    print(f"  b (ns)            = {diag['b_ns']:.0f}")
-    print(f"  samples           = {diag['samples']}")
-    print(f"  duration (s)      = {diag['duration_s']:.3f}")
-    print(f"  residual std (ns) = {diag['residual_std_ns']:.0f}")
-    print(f"  residual max (ns) = {diag['residual_max_abs_ns']:.0f}")
-    print(f"  freq ppm          = {diag['freq_ppm']:+.3f}")
-    print()
 
     for arm in ['camera_arm_1', 'camera_arm_2', 'camera_arm_3']:
         video_path = session_dir / arm / 'metadata.csv'
@@ -111,9 +115,42 @@ def main():
         if not video_path.exists():
             print(f'{arm}: metadata.csv not found, skipping')
             continue
+
+        # Infer arm_id from directory name, e.g. camera_arm_1 -> 1.
+        arm_id = int(arm.split('_')[-1])
+        twincat_path = _resolve_twincat_path(session_dir, arm_id)
+        if twincat_path is None:
+            print(f'{arm}: TwinCAT pose CSV not found, skipping')
+            continue
+
+        # If using the legacy single CSV that may contain multiple arms,
+        # filter to the arm of interest for both drift fitting and alignment.
+        df_twincat = pd.read_csv(twincat_path)
+        if 'arm' in df_twincat.columns and len(df_twincat['arm'].unique()) > 1:
+            df_twincat = df_twincat[df_twincat['arm'] == arm_id].copy()
+            if df_twincat.empty:
+                print(f'{arm}: no poses for arm {arm_id} in legacy CSV, skipping')
+                continue
+            # Fit drift model on the filtered arm data.
+            pc = df_twincat['timestamp_ns_pc'].values.astype(np.float64)
+            plc = df_twincat['timestamp_ns'].values.astype(np.float64)
+            k, b = np.polyfit(pc, plc, 1)
+        else:
+            print('=== Fitting PLC-PC drift model ===')
+            k, b, diag = fit_plc_pc_model(twincat_path)
+            print(f"  k                 = {diag['k']:.12f}")
+            print(f"  b (ns)            = {diag['b_ns']:.0f}")
+            print(f"  samples           = {diag['samples']}")
+            print(f"  duration (s)      = {diag['duration_s']:.3f}")
+            print(f"  residual std (ns) = {diag['residual_std_ns']:.0f}")
+            print(f"  residual max (ns) = {diag['residual_max_abs_ns']:.0f}")
+            print(f"  freq ppm          = {diag['freq_ppm']:+.3f}")
+            print()
+
         err, valid_mask = align_video_to_twincat(video_path, twincat_path, k, b, output_path)
         valid_err = err[valid_mask]
         print(f'=== {arm} ===')
+        print(f'  TwinCAT source: {twincat_path}')
         print(f'  Frames: {len(err)}')
         print(f'  Valid frames (inside TwinCAT range): {len(valid_err)}')
         print(f'  Alignment error ms: mean={valid_err.mean():.3f}, std={valid_err.std():.3f}, max={valid_err.max():.3f}')

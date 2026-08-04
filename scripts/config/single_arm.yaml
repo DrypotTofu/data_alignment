@@ -1,5 +1,5 @@
 base_dir: ./sessions
-session_name: end_to_end_1min_test
+session_name: single_arm_test
 clock_source: host_realtime
 clock_offset_ns: 0
 sources:
@@ -16,15 +16,27 @@ sources:
   use_rtt_correction: true
   output_dual_timestamps: true
   num_connections: 1
+  output_all_arms: false
   symbols:
+    joint_angles: Sir_RunRunShaw_Database.Joint_Angles
     armframe_positions: Sir_RunRunShaw_Database.EndEffector_Coordinate_ArmFrame
+    scopeframe_positions: Sir_RunRunShaw_Database.EndEffector_Coordinate_ScopeFrame
     orientations: Sir_RunRunShaw_Database.EndEffector_Orientation
+    instrument_types: Sir_RunRunShaw_Database.Instrument_Type
   symbol_shapes:
+    joint_angles:
+    - 4
+    - 12
     armframe_positions:
+    - 4
+    - 3
+    scopeframe_positions:
     - 4
     - 3
     orientations:
     - 4
+    - 4
+    instrument_types:
     - 4
 - type: process_camera
   name: camera_arm_2
@@ -45,10 +57,10 @@ sources:
   arm_id: 1
   width: 640
   height: 480
-  fps: 30
+  fps: 22
   fourcc: MJPG
   backend: dshow
-  image_format: png
+  image_format: jpg
   ready_timeout: 20.0
 - type: process_camera
   name: camera_arm_3
@@ -57,8 +69,8 @@ sources:
   arm_id: 3
   width: 640
   height: 480
-  fps: 30
-  fourcc: YUY2
+  fps: 22
+  fourcc: MJPG
   backend: dshow
-  image_format: png
+  image_format: jpg
   ready_timeout: 20.0

@@ -124,6 +124,11 @@ class TwinCATConfig:
     # into the output queue, increasing effective sample rate at the cost of
     # duplicated CycleCounts. Default 1 preserves the original behaviour.
     num_connections: int = 1
+    # If True, output one sample per arm (1..4) per read cycle. Each arm is
+    # written to its own CSV under robot_pose_arm<N>/twincat_poses.csv. This
+    # allows collecting all arms and all configured symbols over a single ADS
+    # connection. When False, only selected_arm is output (original behaviour).
+    output_all_arms: bool = False
 
     def __post_init__(self):
         if self.symbols is None:
@@ -243,8 +248,9 @@ class TwinCATSource(DataSource):
         t_send_ns: int,
         t_recv_ns: int,
         conn_id: int = 0,
+        arm_idx: int | None = None,
     ) -> DataSample:
-        """Construct a DataSample for the selected arm.
+        """Construct a DataSample for a specific arm.
 
         Only the symbols configured in ``self.config.symbols`` are required;
         missing fields are omitted from the sample. This allows users to read
@@ -259,8 +265,13 @@ class TwinCATSource(DataSource):
         ``t_send_ns`` and ``t_recv_ns`` bracket the ADS read; when RTT
         correction is enabled, ``pc_arrival_ns`` is approximated as
         ``t_recv_ns - RTT/2`` to reduce offset-estimate jitter.
+
+        Args:
+            arm_idx: Zero-based arm index. If None, uses ``selected_arm - 1``.
         """
-        arm_idx = self.config.selected_arm - 1
+        if arm_idx is None:
+            arm_idx = self.config.selected_arm - 1
+        arm_id = arm_idx + 1
         has = {k: k in arrays for k in [
             'joint_angles', 'armframe_positions', 'scopeframe_positions',
             'orientations', 'instrument_types']}
@@ -303,7 +314,7 @@ class TwinCATSource(DataSource):
                 f"Unsupported timestamp_mode: {self.config.timestamp_mode}"
             )
 
-        data: dict[str, Any] = {'arm': self.config.selected_arm}
+        data: dict[str, Any] = {'arm': arm_id}
 
         if has['instrument_types']:
             data['instrument_type'] = arrays['instrument_types'][arm_idx]
@@ -336,7 +347,7 @@ class TwinCATSource(DataSource):
             'ams_net_id': self.config.ams_net_id,
             'ams_port': self.config.ams_port,
             'ip_address': self.config.ip_address,
-            'selected_arm': self.config.selected_arm,
+            'selected_arm': arm_id,
             'orientation_order': 'wxyz (to be confirmed)',
             'pc_cycle_start_ns': cycle_start_ns,
             'pc_arrival_ns': t_recv_ns,
@@ -408,10 +419,24 @@ class TwinCATSource(DataSource):
                 t_send_ns = time.time_ns()
                 arrays = self._read_arrays(plc)
                 t_recv_ns = time.time_ns()
-                sample = self._build_sample(
-                    cycle_start_ns, arrays, plc, t_send_ns, t_recv_ns, conn_id
-                )
-                self._put_sample(sample)
+
+                if self.config.output_all_arms:
+                    # Output one sample per arm (1..4) from the same ADS read.
+                    for arm_idx in range(4):
+                        sample = self._build_sample(
+                            cycle_start_ns, arrays, plc, t_send_ns, t_recv_ns,
+                            conn_id, arm_idx=arm_idx
+                        )
+                        # Tag sample with per-arm source name so the writer can
+                        # dispatch to separate CSV files.
+                        sample.source_name = f'{self.name}_arm{arm_idx + 1}'
+                        self._put_sample(sample)
+                else:
+                    sample = self._build_sample(
+                        cycle_start_ns, arrays, plc, t_send_ns, t_recv_ns, conn_id
+                    )
+                    self._put_sample(sample)
+
                 with self._lock:
                     self._samples_read += 1
                     self._consecutive_errors = 0
@@ -470,6 +495,16 @@ class TwinCATSource(DataSource):
         for t in self._worker_threads:
             t.join()
 
+    def get_writer_keys(self) -> list[str]:
+        """Return the writer keys for this source.
+
+        In multi-arm mode each arm gets its own writer key so samples can be
+        routed to per-arm CSV files.
+        """
+        if self.config.output_all_arms:
+            return [f'{self.name}_arm{i}' for i in range(1, 5)]
+        return [self.name]
+
     def get_summary(self) -> dict[str, Any]:
         summary = super().get_summary()
         summary.update({
@@ -483,32 +518,24 @@ class TwinCATSource(DataSource):
             'selected_arm': self.config.selected_arm,
             'timestamp_mode': self.config.timestamp_mode,
             'num_connections': self.config.num_connections,
+            'output_all_arms': self.config.output_all_arms,
             'samples_read': self._samples_read,
             'missed_cycles': self._missed_cycles,
         })
         return summary
 
 
-class TwinCATWriter:
-    """Writer for TwinCAT pose samples."""
+class _TwinCATCsvWriter:
+    """Helper that writes a single TwinCAT CSV file."""
 
-    def __init__(self, source_name: str, out_dir: Path):
-        self.source_name = source_name
-        self.out_dir = Path(out_dir)
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.csv_path = self.out_dir / 'twincat_poses.csv'
+    def __init__(self, csv_path: Path):
+        self.csv_path = Path(csv_path)
+        self.csv_path.parent.mkdir(parents=True, exist_ok=True)
         self._f = open(self.csv_path, 'w', newline='')
-        # Header will be written on first sample.
         self._writer = None
 
-    def write(self, sample: DataSample) -> None:
+    def write(self, row: dict[str, Any]) -> None:
         import csv
-        data = sample.data
-        row = {
-            'timestamp_ns': sample.timestamp_ns,
-            **data,
-            **sample.metadata,
-        }
         if self._writer is None:
             self._writer = csv.DictWriter(self._f, fieldnames=list(row.keys()))
             self._writer.writeheader()
@@ -518,6 +545,47 @@ class TwinCATWriter:
         if self._f:
             self._f.close()
             self._f = None
+
+
+class TwinCATWriter:
+    """Writer for TwinCAT pose samples.
+
+    Supports both single-arm mode (all samples written to the base directory)
+    and multi-arm mode (samples dispatched to per-arm subdirectories based on
+    ``sample.source_name``).
+    """
+
+    def __init__(self, source_name: str, out_dir: Path):
+        self.source_name = source_name
+        self.out_dir = Path(out_dir)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self._base_writer = _TwinCATCsvWriter(self.out_dir / 'twincat_poses.csv')
+        self._arm_writers: dict[str, _TwinCATCsvWriter] = {}
+
+    def _arm_writer(self, source_name: str) -> _TwinCATCsvWriter:
+        """Return (creating if necessary) the CSV writer for a source name."""
+        if source_name == self.source_name:
+            return self._base_writer
+        writer = self._arm_writers.get(source_name)
+        if writer is None:
+            writer = _TwinCATCsvWriter(self.out_dir / source_name / 'twincat_poses.csv')
+            self._arm_writers[source_name] = writer
+        return writer
+
+    def write(self, sample: DataSample) -> None:
+        data = sample.data
+        row = {
+            'timestamp_ns': sample.timestamp_ns,
+            **data,
+            **sample.metadata,
+        }
+        writer = self._arm_writer(sample.source_name)
+        writer.write(row)
+
+    def close(self) -> None:
+        self._base_writer.close()
+        for writer in self._arm_writers.values():
+            writer.close()
 
     def __enter__(self):
         return self
