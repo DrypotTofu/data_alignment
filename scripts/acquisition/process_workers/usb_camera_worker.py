@@ -172,7 +172,7 @@ def main() -> None:
     parser.add_argument('--index', type=int, required=True)
     parser.add_argument('--width', type=int, required=True)
     parser.add_argument('--height', type=int, required=True)
-    parser.add_argument('--fps', type=int, default=30)
+    parser.add_argument('--fps', type=int, default=None)
     parser.add_argument('--fourcc', type=str, default='MJPG')
     parser.add_argument('--backend', type=str, default='dshow')
     parser.add_argument('--topic', type=str, required=True)
@@ -226,7 +226,8 @@ def main() -> None:
         ready_path.unlink()
 
     # Queue holds a few seconds of frames so brief write stalls do not drop data.
-    frame_queue: queue.Queue[Any] = queue.Queue(maxsize=max(args.fps * 2, 30))
+    queue_fps = args.fps if args.fps is not None else 30
+    frame_queue: queue.Queue[Any] = queue.Queue(maxsize=max(queue_fps * 2, 30))
     stop_event = threading.Event()
 
     capture_thread = threading.Thread(
