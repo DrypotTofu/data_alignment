@@ -59,6 +59,7 @@ sources:
   backend: dshow
   image_format: jpg
   ready_timeout: 20.0
+  enabled: false
 - type: process_camera
   name: camera_arm_1
   camera_index: 1
@@ -66,10 +67,10 @@ sources:
   arm_id: 1
   width: 640
   height: 480
-  fps: 22
+  fps: 30
   fourcc: MJPG
   backend: dshow
-  image_format: jpg
+  image_format: png
   ready_timeout: 20.0
 - type: process_camera
   name: camera_arm_3
@@ -83,3 +84,4 @@ sources:
   backend: dshow
   image_format: jpg
   ready_timeout: 20.0
+  enabled: false
