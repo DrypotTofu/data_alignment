@@ -429,7 +429,7 @@ def main():
     parser.add_argument('--indices', type=int, nargs='+', default=list(range(10)),
                         help='Camera indices to probe (default: 0-9)')
     parser.add_argument('--backend', type=str, default='dshow', choices=list(BACKENDS.keys()))
-    parser.add_argument('--out-dir', type=str, default='./camera_test_frames',
+    parser.add_argument('--out-dir', type=str, default='./var/camera_test_frames',
                         help='Directory for preview frames')
     parser.add_argument('--benchmark-duration', type=float, default=2.0,
                         help='Seconds to benchmark each (resolution, fourcc) profile')

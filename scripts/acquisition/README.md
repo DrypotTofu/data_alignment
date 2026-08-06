@@ -54,7 +54,7 @@ sessions/20260713_120000/
 python run_acquisition.py --config config/example_acquisition.yaml --duration 10
 
 # USB camera only quick test
-python run_acquisition.py --config config/test_usb_only.yaml --duration 5
+python run_acquisition.py --config config/archive/test_usb_only.yaml --duration 5
 ```
 
 Press `Ctrl-C` to stop gracefully.

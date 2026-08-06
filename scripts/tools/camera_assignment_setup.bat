@@ -7,7 +7,7 @@ set PYTHON=C:\Users\11764\.conda\envs\SurgDataColl\python.exe
 set PROJECT_ROOT=D:\AI4Surg\DataCollection\data_alignment
 set SCRIPT=%PROJECT_ROOT%\scripts\tools\camera_assignment_gui.py
 set CONFIG=%PROJECT_ROOT%\scripts\config\default.yaml
-set OUT_DIR=%PROJECT_ROOT%\camera_test_frames
+set OUT_DIR=%PROJECT_ROOT%\var\camera_test_frames
 set LOG=%PROJECT_ROOT%\scripts\tools\camera_assignment_setup.log
 
 cd /d "%PROJECT_ROOT%"

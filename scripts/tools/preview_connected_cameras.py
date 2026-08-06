@@ -119,7 +119,7 @@ def main():
     parser.add_argument('--indices', type=int, nargs='+', default=list(range(10)),
                         help='Camera indices to probe (default: 0-9)')
     parser.add_argument('--backend', type=str, default='dshow', choices=list(BACKENDS.keys()))
-    parser.add_argument('--out-dir', type=str, default='./camera_test_frames',
+    parser.add_argument('--out-dir', type=str, default='./var/camera_test_frames',
                         help='Directory for saved preview frames')
     parser.add_argument('--save-csv', type=str, default=None,
                         help='Optional CSV path to write probe results')

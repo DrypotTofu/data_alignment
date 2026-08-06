@@ -153,7 +153,7 @@ def main() -> int:
     parser.add_argument('--backend', type=str, default='dshow', choices=list(BACKENDS.keys()))
     parser.add_argument('--fourcc', type=str, default='MJPG',
                         help='FOURCC codec, e.g. MJPG or YUY2')
-    parser.add_argument('--snapshot-dir', type=str, default='./camera_test_frames',
+    parser.add_argument('--snapshot-dir', type=str, default='./var/camera_test_frames',
                         help='Directory for saved snapshots')
     args = parser.parse_args()
 
