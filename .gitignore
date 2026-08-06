@@ -9,6 +9,7 @@ sessions/
 scripts/capture/
 scripts/multi_capture/
 camera_test_frames/
+var/
 *.png
 *.jpg
 *.mp4

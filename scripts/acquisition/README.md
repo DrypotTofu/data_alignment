@@ -61,10 +61,11 @@ Press `Ctrl-C` to stop gracefully.
 
 ## Multi-USB camera recording
 
-Use `usb_multi_camera` source when you have two or more identical USB cameras:
+Use `usb_multi_camera` source when you have two or more identical USB cameras
+(deprecated — prefer one `process_camera` source per camera):
 
 ```bash
-python run_acquisition.py --config config/multi_usb_cameras.yaml --duration 10
+python run_acquisition.py --config config/archive/multi_usb_cameras.yaml --duration 10
 ```
 
 **Important Windows limitation**: two identical USB cameras usually cannot both use

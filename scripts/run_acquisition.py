@@ -20,11 +20,11 @@ import yaml
 from acquisition import AcquisitionSession
 from acquisition.session import SessionConfig
 from acquisition.sources import EndoscopeSource, TwinCATSource, USBCameraSource, USBMultiCameraSource, USBCameraProcessSource, ReservedArmSource
-from acquisition.sources.endoscope import EndoscopeConfig
+from acquisition.sources.legacy.endoscope import EndoscopeConfig
+from acquisition.sources.legacy.usb_camera import USBCameraConfig
+from acquisition.sources.legacy.usb_multi_camera import USBMultiCameraConfig
 from acquisition.sources.reserved_arm import ReservedArmConfig
 from acquisition.sources.twincat import TwinCATConfig
-from acquisition.sources.usb_camera import USBCameraConfig
-from acquisition.sources.usb_multi_camera import USBMultiCameraConfig
 from acquisition.sources.usb_camera_process import USBCameraProcessConfig
 
 logging.basicConfig(

@@ -30,8 +30,8 @@ from typing import Any
 
 import cv2
 
-from ..base_source import DataSample, DataSource
-from ..timestamp import UnifiedTimestamp
+from ...base_source import DataSample, DataSource
+from ...timestamp import UnifiedTimestamp
 from .usb_camera import USBCameraConfig, USBCameraWriter
 
 logger = logging.getLogger(__name__)

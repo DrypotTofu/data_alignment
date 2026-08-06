@@ -243,9 +243,9 @@ class AcquisitionSession:
 
     def _create_writer(self, source: DataSource) -> Any:
         """Factory that creates the appropriate writer for a source."""
-        from .sources.usb_camera import USBCameraSource, USBCameraWriter
-        from .sources.usb_multi_camera import USBMultiCameraSource, USBMultiCameraWriter
-        from .sources.endoscope import EndoscopeSource, EndoscopeWriter
+        from .sources.legacy.usb_camera import USBCameraSource, USBCameraWriter
+        from .sources.legacy.usb_multi_camera import USBMultiCameraSource, USBMultiCameraWriter
+        from .sources.legacy.endoscope import EndoscopeSource, EndoscopeWriter
         from .sources.twincat import TwinCATSource, TwinCATWriter
 
         source_dir = self.session_dir / source.name
