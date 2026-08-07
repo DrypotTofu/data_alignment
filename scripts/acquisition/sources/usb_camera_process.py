@@ -44,6 +44,15 @@ class USBCameraProcessConfig:
     # Seconds of frames the worker discards right after opening the camera, so
     # auto white balance / exposure converge before recording starts.
     warmup_s: float = 1.5
+    # If set, the driver is left in its native (fast) mode and the worker keeps
+    # frames on a virtual 1/target_fps grid for an exact output rate.
+    target_fps: float | None = None
+    # PNG compression level 0-9 (lossless at every level). 720p at 30 fps needs
+    # 0 (level 1 encodes at only ~25 fps on this machine).
+    png_compression: int = 1
+    # Parallel image-writer threads per camera. Use 2 for PNG at 720p+ so the
+    # writer keeps up with 30 fps at compression level 1.
+    writer_threads: int = 1
 
 
 class USBCameraProcessSource(DataSource):
@@ -110,6 +119,11 @@ class USBCameraProcessSource(DataSource):
             cmd += ['--height', str(self.config.height)]
         if self.config.fps is not None:
             cmd += ['--fps', str(self.config.fps)]
+        if self.config.target_fps is not None:
+            cmd += ['--target-fps', str(self.config.target_fps)]
+        cmd += ['--png-compression', str(self.config.png_compression)]
+        if self.config.writer_threads != 1:
+            cmd += ['--writer-threads', str(self.config.writer_threads)]
         if self.config.fourcc:
             cmd += ['--fourcc', self.config.fourcc]
         if self.config.duration is not None:

@@ -121,6 +121,9 @@ def build_source_from_config(source_cfg: dict[str, Any]):
             ready_file=source_cfg.get('ready_file', '.ready'),
             ready_timeout=source_cfg.get('ready_timeout', 10.0),
             warmup_s=source_cfg.get('warmup_s', 1.5),
+            target_fps=source_cfg.get('target_fps'),
+            png_compression=source_cfg.get('png_compression', 1),
+            writer_threads=source_cfg.get('writer_threads', 1),
             arm_id=source_cfg.get('arm_id'),
         )
         return USBCameraProcessSource(config=cfg)
@@ -158,6 +161,10 @@ def main():
 
     session = AcquisitionSession(cfg)
     for source_cfg in cfg.sources:
+        if source_cfg.get('enabled') is False:
+            logger.info('Source %s is disabled in config, skipping',
+                        source_cfg.get('name', source_cfg.get('type')))
+            continue
         source = build_source_from_config(source_cfg)
         session.register_source(source)
 

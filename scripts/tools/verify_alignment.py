@@ -43,6 +43,8 @@ def align_video_to_twincat(
 ):
     """Map video frame timestamps to PLC axis and find nearest TwinCAT pose."""
     video_df = pd.read_csv(video_metadata_path)
+    # Multi-writer workers may interleave metadata rows; sort by timestamp.
+    video_df = video_df.sort_values('timestamp_ns').reset_index(drop=True)
     twincat_df = pd.read_csv(twincat_path)
 
     video_pc = video_df['timestamp_ns'].values.astype(np.float64)

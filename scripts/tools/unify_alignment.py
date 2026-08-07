@@ -41,6 +41,8 @@ def build_unified_alignment(session_dir: Path) -> pd.DataFrame:
             print(f'{arm}: metadata.csv not found, skipping')
             continue
         video_df = pd.read_csv(meta_path)
+        # Multi-writer workers may interleave metadata rows; sort by timestamp.
+        video_df = video_df.sort_values('timestamp_ns').reset_index(drop=True)
         video_pc = video_df['timestamp_ns'].values.astype(np.float64)
         cameras[arm] = {
             'df': video_df,

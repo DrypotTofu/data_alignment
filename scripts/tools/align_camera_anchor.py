@@ -184,6 +184,8 @@ def build_camera_anchor_alignment(
             print(f'{name}: metadata.csv not found, skipping')
             continue
         df = pd.read_csv(meta_path)
+        # Multi-writer workers may interleave metadata rows; sort by timestamp.
+        df = df.sort_values('timestamp_ns').reset_index(drop=True)
         pc = df['timestamp_ns'].values.astype(np.float64)
         cameras[name] = {
             'df': df,
