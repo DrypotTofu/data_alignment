@@ -65,12 +65,12 @@ sources:
   camera_index: 1
   topic_name: camera/arm_1/image_raw
   arm_id: 1
-  width: 640
-  height: 480
-  fps: 30
+  width: 1280
+  height: 720
+  fps: 60
   fourcc: MJPG
   backend: dshow
-  image_format: png
+  image_format: jpg
   ready_timeout: 20.0
 - type: process_camera
   name: camera_arm_3
