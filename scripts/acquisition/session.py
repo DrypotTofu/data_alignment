@@ -146,8 +146,17 @@ class AcquisitionSession:
         for source in self._main_thread_sources.values():
             source.prepare()
 
-        # Start background sources.
-        for source in background_sources.values():
+        # Start background sources. Process-based camera workers block in
+        # start() until their warm-up (auto white balance convergence) is done
+        # and they signal ready, so start them FIRST: TwinCAT and the cameras
+        # then begin recording at (nearly) the same time instead of TwinCAT
+        # running ahead during the camera warm-up.
+        from .sources.usb_camera_process import USBCameraProcessSource
+
+        def _startup_key(source):
+            return 0 if isinstance(source, USBCameraProcessSource) else 1
+
+        for source in sorted(background_sources.values(), key=_startup_key):
             source.start()
 
         main_thread_count = len(self._main_thread_sources)

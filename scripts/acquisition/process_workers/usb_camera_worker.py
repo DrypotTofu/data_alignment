@@ -88,25 +88,28 @@ def capture_loop(
     fps: int,
     ready_path: Path,
     clock_offset_ns: int,
+    warmup_s: float = 0.0,
 ) -> None:
     """Read frames from the camera at the requested rate and enqueue them."""
     _set_capture_thread_priority()
 
     frame_idx = 0
-
-    # Read the first frame before signalling readiness.
-    ret, _ = cap.read()
-    if not ret:
-        logger.error('First frame read failed')
-        return
-    ready_path.write_text(str(time.time_ns()))
-    logger.info('Worker ready: camera is live')
+    # Discard frames while auto white balance / exposure are still converging;
+    # otherwise the first recorded frames carry a yellow tint.
+    warmup_end = time.time() + max(0.0, warmup_s)
 
     while not stop_event.is_set():
         ret, frame = cap.read()
         if not ret:
             logger.warning('Frame read failed, exiting capture loop')
             break
+
+        if time.time() < warmup_end:
+            continue
+
+        if frame_idx == 0:
+            ready_path.write_text(str(time.time_ns()))
+            logger.info('Worker ready: camera is live (warm-up %.1f s done)', warmup_s)
 
         pc_arrival_ns = time.time_ns()
         timestamp_ns = pc_arrival_ns + clock_offset_ns
@@ -182,6 +185,9 @@ def main() -> None:
     parser.add_argument('--duration', type=float, default=None,
                         help='If set, stop after N seconds')
     parser.add_argument('--image-format', type=str, default='png')
+    parser.add_argument('--warmup-s', type=float, default=1.5,
+                        help='Seconds of frames to discard after opening the camera '
+                             '(lets auto white balance / exposure converge)')
     parser.add_argument('--clock-offset-ns', type=int, default=0,
                         help='Offset added to pc_arrival_ns to align with a master clock')
     parser.add_argument('--stop-file', type=str, default='.stop',
@@ -232,7 +238,8 @@ def main() -> None:
 
     capture_thread = threading.Thread(
         target=capture_loop,
-        args=(cap, frame_queue, stop_event, args.fps, ready_path, args.clock_offset_ns),
+        args=(cap, frame_queue, stop_event, args.fps, ready_path, args.clock_offset_ns,
+              args.warmup_s),
         name='worker-capture',
         daemon=True,
     )

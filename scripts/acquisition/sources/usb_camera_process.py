@@ -41,6 +41,9 @@ class USBCameraProcessConfig:
     stop_file: str = '.stop'
     ready_file: str = '.ready'
     ready_timeout: float = 10.0
+    # Seconds of frames the worker discards right after opening the camera, so
+    # auto white balance / exposure converge before recording starts.
+    warmup_s: float = 1.5
 
 
 class USBCameraProcessSource(DataSource):
@@ -111,6 +114,8 @@ class USBCameraProcessSource(DataSource):
             cmd += ['--fourcc', self.config.fourcc]
         if self.config.duration is not None:
             cmd += ['--duration', str(self.config.duration)]
+        if self.config.warmup_s is not None:
+            cmd += ['--warmup-s', str(self.config.warmup_s)]
 
         logger.info('Starting worker process for %s: %s', self.name, ' '.join(cmd))
         env = os.environ.copy()

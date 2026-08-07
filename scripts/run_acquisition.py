@@ -120,6 +120,7 @@ def build_source_from_config(source_cfg: dict[str, Any]):
             stop_file=source_cfg.get('stop_file', '.stop'),
             ready_file=source_cfg.get('ready_file', '.ready'),
             ready_timeout=source_cfg.get('ready_timeout', 10.0),
+            warmup_s=source_cfg.get('warmup_s', 1.5),
             arm_id=source_cfg.get('arm_id'),
         )
         return USBCameraProcessSource(config=cfg)
