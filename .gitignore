@@ -6,6 +6,7 @@ coarse_alignment_data/
 # Generated session outputs
 scripts/sessions/
 sessions/
+packed/
 scripts/capture/
 scripts/multi_capture/
 camera_test_frames/

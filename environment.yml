@@ -5,6 +5,7 @@ channels:
 dependencies:
   - python=3.11
   - pip
+  - conda-forge::ffmpeg
   - pip:
       - pandas>=2.0.0
       - xlsxwriter>=3.1.0
@@ -13,3 +14,4 @@ dependencies:
       - opencv-python>=4.8.0
       - pyyaml>=6.0
       - pyads>=3.6.0
+      - pyarrow>=15.0.0
