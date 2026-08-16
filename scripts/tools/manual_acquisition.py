@@ -18,13 +18,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import yaml
-
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from acquisition import AcquisitionSession
-from acquisition.session import SessionConfig
-from run_acquisition import build_source_from_config
+from acquisition.config import load_config
+from acquisition.registry import build_source_from_config
 
 
 logging.basicConfig(
@@ -32,12 +30,6 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
-def load_config(path: str) -> SessionConfig:
-    with open(path, 'r', encoding='utf-8') as f:
-        data = yaml.safe_load(f)
-    return SessionConfig(**data)
 
 
 def default_session_name() -> str:

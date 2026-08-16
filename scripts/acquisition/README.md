@@ -8,6 +8,9 @@ A unified, extensible multi-modal data acquisition framework for surgical-robot 
 - **DataSource**: abstract base class for every sensor/modality. Runs in its own thread.
 - **DataSample**: timestamped sample produced by a source.
 - **UnifiedTimestamp**: single clock provider; defaults to host `time.time_ns()`, can be switched to TwinCAT-master or manual offset.
+- **Registry**: `acquisition.registry` maps YAML source types to source factories and source classes to writer factories.
+- **Config validation**: `acquisition.config` loads YAML, applies top-level `camera_bindings`, and rejects duplicate camera indices, duplicate arm ids, and invalid rates before acquisition starts.
+- **Session layout**: `acquisition.session_layout` is the shared source of truth for camera metadata and TwinCAT CSV paths.
 
 ## Architecture
 
@@ -32,10 +35,11 @@ A unified, extensible multi-modal data acquisition framework for surgical-robot 
 ```
 sessions/20260713_120000/
 ├── session.json                 # metadata, source summaries, sample counts
-├── camera_endoscope/            # endoscope frames + metadata.csv (placeholder)
-├── camera_wrist_left/           # USB camera frames + metadata.csv
-├── camera_wrist_right/          # USB camera frames + metadata.csv
-└── robot_poses/                 # TwinCAT CSV
+├── camera_arm_1/                # left wrist camera frames + metadata.csv
+├── camera_arm_2/                # endoscope/main-view frames + metadata.csv
+├── camera_arm_3/                # right wrist camera frames + metadata.csv
+└── robot_pose/
+    └── robot_pose_arm<N>/       # per-arm TwinCAT CSV in multi-arm mode
 ```
 
 ## How to add a new data modality
@@ -43,29 +47,29 @@ sessions/20260713_120000/
 1. Create `acquisition/sources/my_sensor.py`.
 2. Subclass `DataSource` and implement `name`, `_acquire_loop()`, and optionally `get_summary()`.
 3. Create a writer class (e.g. `MySensorWriter`) that knows how to persist samples.
-4. Register both in `AcquisitionSession._create_writer()`.
-5. Add a factory branch in `run_acquisition.py::build_source_from_config()`.
+4. Register the source in `acquisition.registry.SOURCE_BUILDERS`.
+5. Register the writer in `acquisition.registry.WRITER_FACTORIES` unless the source writes directly to disk.
 6. Add an entry to your YAML config.
 
 ## Running a session
 
 ```bash
-# Use the example config (includes placeholders for endoscope + TwinCAT)
+# Use the documented example config (three process cameras + TwinCAT)
 python run_acquisition.py --config config/example_acquisition.yaml --duration 10
 
-# USB camera only quick test
-python run_acquisition.py --config config/archive/test_usb_only.yaml --duration 5
+# Current single-arm fallback
+python run_acquisition.py --config config/single_arm.yaml --duration 5
 ```
 
 Press `Ctrl-C` to stop gracefully.
 
 ## Multi-USB camera recording
 
-Use `usb_multi_camera` source when you have two or more identical USB cameras
-(deprecated — prefer one `process_camera` source per camera):
+Use one `process_camera` source per camera. Legacy `usb_multi_camera` configs
+remain under `config/archive/` only for reference.
 
 ```bash
-python run_acquisition.py --config config/archive/multi_usb_cameras.yaml --duration 10
+python run_acquisition.py --config config/default.yaml --duration 10
 ```
 
 **Important Windows limitation**: two identical USB cameras usually cannot both use

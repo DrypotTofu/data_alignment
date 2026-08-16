@@ -10,7 +10,7 @@
   - `config/` — YAML session configs for `run_acquisition.py`.
     - `default.yaml` — current working multi-arm full-data configuration.
     - `single_arm.yaml` — fallback single-arm configuration.
-    - `three_cameras.yaml` — three-camera production configuration.
+    - `archive/three_cameras_legacy.yaml` — historical thread-based three-camera config; use `default.yaml` for current three-camera work.
     - `example_acquisition.yaml` — documented example.
     - `archive/` — historical one-off test configs (no longer used).
   - `tools/` — post-processing and alignment utilities.
@@ -36,13 +36,17 @@ conda activate SurgDataColl
 
 Entry point: `run_acquisition.py`
 
-To add a new sensor/modality, subclass `acquisition.base_source.DataSource`, add a writer, and register both in `acquisition.session.AcquisitionSession._create_writer()` and `run_acquisition.py::build_source_from_config()`.
+To add a new sensor/modality, subclass `acquisition.base_source.DataSource`, add a writer if the source does not write directly to disk, and register both in `acquisition.registry` (`SOURCE_BUILDERS` and `WRITER_FACTORIES`). YAML loading and validation live in `acquisition.config`; session layout path helpers live in `acquisition.session_layout`.
 
 Current built-in sources:
 - `process_camera` — single camera running in a separate OS process (**recommended**; supports `backend: msmf` for cameras that downclock when DirectShow FPS is set)
 - `twincat` — TwinCAT ADS robot pose/joint/gripper reads, supports multi-connection and `output_all_arms` (all 8 PLC symbol groups, 4 arms)
 - `reserved_arm` — placeholder source for an arm without a physical camera
 - legacy (deprecated): `usb_camera`, `usb_multi_camera`, `endoscope`
+
+## Camera Bindings
+
+Current YAML configs keep hardware mapping in top-level `camera_bindings` (`arm_1: 2`, `arm_2: 0`, `arm_3: 3`) and keep acquisition parameters (`width`, `fps`, `target_fps`, format) on each source. Direct per-source `camera_index` remains supported for old configs, but new edits should update `camera_bindings`; both assignment tools maintain that field.
 
 ## Housekeeping
 

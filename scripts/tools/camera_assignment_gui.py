@@ -152,6 +152,7 @@ def update_config(config_path: Path, assignment: dict[int, int]):
         data = yaml.safe_load(f)
 
     sources = data.get('sources', [])
+    camera_bindings = data.setdefault('camera_bindings', {})
     backup_path = config_path.with_suffix(config_path.suffix + '.bak')
     if not backup_path.exists():
         import shutil
@@ -170,7 +171,8 @@ def update_config(config_path: Path, assignment: dict[int, int]):
                 'name': f'camera_arm_{arm_id}',
                 'topic_name': f'camera/arm_{arm_id}/image_raw',
                 'arm_id': arm_id,
-                'fps': 30,
+                'fps': 60,
+                'target_fps': 30,
                 'backend': 'dshow',
                 'image_format': 'png',
                 'ready_timeout': 20.0,
@@ -180,25 +182,35 @@ def update_config(config_path: Path, assignment: dict[int, int]):
 
     defaults = {
         1: {'width': 640, 'height': 480, 'fourcc': 'MJPG', 'image_format': 'png'},
-        2: {'width': 1280, 'height': 720, 'fourcc': 'MJPG', 'image_format': 'jpg'},
-        3: {'width': 640, 'height': 480, 'fourcc': 'YUY2', 'image_format': 'png'},
+        2: {'width': 1280, 'height': 720, 'fourcc': 'MJPG', 'image_format': 'png',
+            'png_compression': 1, 'writer_threads': 2},
+        3: {'width': 640, 'height': 480, 'fourcc': 'MJPG', 'image_format': 'png'},
     }
 
     for arm_id, src in camera_sources.items():
         if arm_id in assignment:
             cam_index = assignment[arm_id]
-            src['camera_index'] = cam_index
+            src['enabled'] = True
+            src.pop('camera_index', None)
+            camera_bindings[f'arm_{arm_id}'] = cam_index
             src['type'] = 'process_camera'
             src['name'] = f'camera_arm_{arm_id}'
             src['topic_name'] = f'camera/arm_{arm_id}/image_raw'
             src['arm_id'] = arm_id
-            src['fps'] = 30
+            # Preserve an existing tuned driver mode; target_fps remains the
+            # exact output rate. New sources default to a 60 fps stream
+            # decimated to 30 fps.
+            if src.get('fps') is None:
+                src['fps'] = 60
+            src['target_fps'] = src.get('target_fps', 30)
             src['backend'] = 'dshow'
             src['ready_timeout'] = 20.0
             src.update(defaults[arm_id])
         else:
+            camera_bindings.pop(f'arm_{arm_id}', None)
             src['enabled'] = False
 
+    data['camera_bindings'] = camera_bindings
     data['sources'] = sources
     with open(config_path, 'w', encoding='utf-8') as f:
         yaml.dump(data, f, sort_keys=False, allow_unicode=True)

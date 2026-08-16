@@ -6,49 +6,62 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).parents[1]))
 
-def fit_plc_pc_model(twincat_path: Path) -> tuple[float, float, dict]:
-    """Fit timestamp_ns (PLC) = k * timestamp_ns_pc (PC) + b."""
-    df = pd.read_csv(twincat_path)
-    pc = df['timestamp_ns_pc'].values.astype(np.float64)
-    plc = df['timestamp_ns'].values.astype(np.float64)
+from acquisition.session_layout import DEFAULT_CAMERA_NAMES, camera_metadata_path, resolve_robot_pose_csv
+from acquisition.clock_fit import LinearClockFit, fit_linear_timestamps
 
-    k, b = np.polyfit(pc, plc, 1)
-    predicted = k * pc + b
-    residuals = plc - predicted
+
+def fit_plc_pc_clock_model(twincat_df: pd.DataFrame) -> tuple[LinearClockFit, dict]:
+    """Fit timestamp_ns (PLC) from timestamp_ns_pc (PC) without BLAS."""
+    pc = twincat_df['timestamp_ns_pc'].values.astype(np.float64)
+    plc = twincat_df['timestamp_ns'].values.astype(np.float64)
+    fit = fit_linear_timestamps(pc, plc)
+
+    residuals = np.asarray(fit.residuals, dtype=np.float64)
 
     diag = {
-        'k': float(k),
-        'b_ns': float(b),
+        'k': fit.slope,
+        'b_ns': fit.intercept,
         'samples': len(pc),
         'duration_s': (pc[-1] - pc[0]) / 1e9,
-        'residual_std_ns': float(np.std(residuals)),
-        'residual_max_abs_ns': float(np.max(np.abs(residuals))),
-        'freq_ppm': float((k - 1.0) * 1e6),
+        'residual_std_ns': fit.residual_std,
+        'residual_max_abs_ns': fit.residual_max_abs,
+        'freq_ppm': (fit.slope - 1.0) * 1e6,
     }
-    return k, b, diag
+    return fit, diag
+
+
+def fit_plc_pc_model(twincat_path: Path) -> tuple[float, float, dict]:
+    """Compatibility wrapper returning (k, b, diagnostics)."""
+    fit, diag = fit_plc_pc_clock_model(pd.read_csv(twincat_path))
+    return fit.slope, fit.intercept, diag
 
 
 def align_video_to_twincat(
     video_metadata_path: Path,
-    twincat_path: Path,
-    k: float,
-    b: float,
+    twincat_data: Path | pd.DataFrame,
+    clock_fit: LinearClockFit,
     output_path: Path,
 ):
     """Map video frame timestamps to PLC axis and find nearest TwinCAT pose."""
     video_df = pd.read_csv(video_metadata_path)
     # Multi-writer workers may interleave metadata rows; sort by timestamp.
     video_df = video_df.sort_values('timestamp_ns').reset_index(drop=True)
-    twincat_df = pd.read_csv(twincat_path)
+    twincat_df = (
+        pd.read_csv(twincat_data)
+        if isinstance(twincat_data, Path)
+        else twincat_data.copy()
+    )
 
     video_pc = video_df['timestamp_ns'].values.astype(np.float64)
-    video_plc = k * video_pc + b
+    video_plc = np.asarray([clock_fit.predict(x) for x in video_pc], dtype=np.float64)
 
     twincat_plc = twincat_df['timestamp_ns'].values.astype(np.float64)
 
@@ -91,16 +104,10 @@ def _resolve_twincat_path(session_dir: Path, arm_id: int) -> Path | None:
     """Find the TwinCAT CSV for a given arm.
 
     Prefers the per-arm output from multi-arm mode
-    (``robot_pose_arm<N>/twincat_poses.csv``), then falls back to the legacy
-    single ``robot_pose/twincat_poses.csv``.
+    (``robot_pose/robot_pose_arm<N>/twincat_poses.csv``), then falls back to
+    the legacy single ``robot_pose/twincat_poses.csv``.
     """
-    per_arm_path = session_dir / f'robot_pose_arm{arm_id}' / 'twincat_poses.csv'
-    if per_arm_path.exists():
-        return per_arm_path
-    legacy_path = session_dir / 'robot_pose' / 'twincat_poses.csv'
-    if legacy_path.exists():
-        return legacy_path
-    return None
+    return resolve_robot_pose_csv(session_dir, arm_id)
 
 
 def main():
@@ -111,8 +118,8 @@ def main():
 
     session_dir = args.session
 
-    for arm in ['camera_arm_1', 'camera_arm_2', 'camera_arm_3']:
-        video_path = session_dir / arm / 'metadata.csv'
+    for arm in DEFAULT_CAMERA_NAMES:
+        video_path = camera_metadata_path(session_dir, arm)
         output_path = session_dir / arm / 'aligned_twincat.csv'
         if not video_path.exists():
             print(f'{arm}: metadata.csv not found, skipping')
@@ -133,23 +140,19 @@ def main():
             if df_twincat.empty:
                 print(f'{arm}: no poses for arm {arm_id} in legacy CSV, skipping')
                 continue
-            # Fit drift model on the filtered arm data.
-            pc = df_twincat['timestamp_ns_pc'].values.astype(np.float64)
-            plc = df_twincat['timestamp_ns'].values.astype(np.float64)
-            k, b = np.polyfit(pc, plc, 1)
-        else:
-            print('=== Fitting PLC-PC drift model ===')
-            k, b, diag = fit_plc_pc_model(twincat_path)
-            print(f"  k                 = {diag['k']:.12f}")
-            print(f"  b (ns)            = {diag['b_ns']:.0f}")
-            print(f"  samples           = {diag['samples']}")
-            print(f"  duration (s)      = {diag['duration_s']:.3f}")
-            print(f"  residual std (ns) = {diag['residual_std_ns']:.0f}")
-            print(f"  residual max (ns) = {diag['residual_max_abs_ns']:.0f}")
-            print(f"  freq ppm          = {diag['freq_ppm']:+.3f}")
-            print()
 
-        err, valid_mask = align_video_to_twincat(video_path, twincat_path, k, b, output_path)
+        clock_fit, diag = fit_plc_pc_clock_model(df_twincat)
+        print('=== Fitting PLC-PC drift model ===')
+        print(f"  k                 = {diag['k']:.12f}")
+        print(f"  b (ns)            = {diag['b_ns']:.0f}")
+        print(f"  samples           = {diag['samples']}")
+        print(f"  duration (s)      = {diag['duration_s']:.3f}")
+        print(f"  residual std (ns) = {diag['residual_std_ns']:.0f}")
+        print(f"  residual max (ns) = {diag['residual_max_abs_ns']:.0f}")
+        print(f"  freq ppm          = {diag['freq_ppm']:+.3f}")
+        print()
+
+        err, valid_mask = align_video_to_twincat(video_path, df_twincat, clock_fit, output_path)
         valid_err = err[valid_mask]
         print(f'=== {arm} ===')
         print(f'  TwinCAT source: {twincat_path}')

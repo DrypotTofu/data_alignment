@@ -6,14 +6,20 @@ plus the three camera frame references.
 
 Usage:
     python scripts/tools/unify_alignment.py --session sessions/test_20260803_104724
+    python scripts/tools/unify_alignment.py --session sessions/test_20260803_104724 --arm-id 2
 """
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+
+from acquisition.session_layout import DEFAULT_CAMERA_NAMES, camera_metadata_path, resolve_robot_pose_csv
 
 
 def nearest_frame_idx(video_pc: np.ndarray, target_pc: float) -> int:
@@ -25,18 +31,32 @@ def nearest_frame_idx(video_pc: np.ndarray, target_pc: float) -> int:
     return idx - 1 if left_diff < right_diff else idx
 
 
-def build_unified_alignment(session_dir: Path) -> pd.DataFrame:
-    """Create one row per robot pose with nearest frames from all cameras."""
-    twincat_path = session_dir / 'robot_pose' / 'twincat_poses.csv'
-    if not twincat_path.exists():
-        raise FileNotFoundError(f'Robot pose CSV not found: {twincat_path}')
+def load_robot_pose(session_dir: Path, arm_id: int) -> pd.DataFrame:
+    """Load the pose table for one arm from current or legacy layouts."""
+    pose_path = resolve_robot_pose_csv(session_dir, arm_id)
+    if pose_path is None:
+        raise FileNotFoundError(f'Robot pose CSV not found under {session_dir / "robot_pose"}')
 
-    robot_df = pd.read_csv(twincat_path)
+    df = pd.read_csv(pose_path)
+    if pose_path.parent.name == f'robot_pose_arm{arm_id}':
+        print(f'robot_pose arm{arm_id}: loading {pose_path}')
+    else:
+        if 'arm' in df.columns:
+            df = df[df['arm'] == arm_id].copy()
+            if df.empty:
+                raise ValueError(f'No poses for arm {arm_id} in {pose_path}')
+        print(f'robot_pose legacy: loading {pose_path}')
+    return df.sort_values('timestamp_ns').reset_index(drop=True)
+
+
+def build_unified_alignment(session_dir: Path, arm_id: int = 1) -> pd.DataFrame:
+    """Create one row per robot pose with nearest frames from all cameras."""
+    robot_df = load_robot_pose(session_dir, arm_id)
 
     # Prepare camera data and compute each camera's active time range in PC domain.
     cameras = {}
-    for arm in ['camera_arm_1', 'camera_arm_2', 'camera_arm_3']:
-        meta_path = session_dir / arm / 'metadata.csv'
+    for arm in DEFAULT_CAMERA_NAMES:
+        meta_path = camera_metadata_path(session_dir, arm)
         if not meta_path.exists():
             print(f'{arm}: metadata.csv not found, skipping')
             continue
@@ -114,6 +134,8 @@ def build_unified_alignment(session_dir: Path) -> pd.DataFrame:
 def main() -> int:
     parser = argparse.ArgumentParser(description='Build unified multi-camera alignment CSV')
     parser.add_argument('--session', type=Path, required=True, help='Session directory')
+    parser.add_argument('--arm-id', type=int, default=1,
+                        help='Robot arm to anchor in current multi-arm sessions')
     parser.add_argument('--out-dir', type=Path, default=None, help='Output directory')
     args = parser.parse_args()
 
@@ -121,7 +143,7 @@ def main() -> int:
     out_dir = args.out_dir or session_dir / 'unified_alignment'
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    df = build_unified_alignment(session_dir)
+    df = build_unified_alignment(session_dir, arm_id=args.arm_id)
     out_path = out_dir / 'unified_alignment.csv'
     df.to_csv(out_path, index=False)
 
@@ -136,7 +158,7 @@ def main() -> int:
     print(f'Valid-only CSV saved: {valid_path}')
 
     # Print error statistics per camera (only for rows inside common camera window)
-    for arm in ['camera_arm_1', 'camera_arm_2', 'camera_arm_3']:
+    for arm in DEFAULT_CAMERA_NAMES:
         err_col = f'{arm}_alignment_error_ms'
         if err_col in valid_df.columns:
             errors = valid_df[err_col].values

@@ -39,9 +39,9 @@ FOURCC_OPTIONS = ['MJPG', 'YUY2']
 IMAGE_FORMAT_OPTIONS = ['jpg', 'png']
 
 DEFAULT_ARM_SUGGESTIONS = {
-    1: {'width': 640, 'height': 480, 'fps': 22, 'fourcc': 'MJPG', 'image_format': 'jpg'},
-    2: {'width': 1280, 'height': 720, 'fps': 60, 'fourcc': 'MJPG', 'image_format': 'jpg'},
-    3: {'width': 640, 'height': 480, 'fps': 22, 'fourcc': 'MJPG', 'image_format': 'jpg'},
+    1: {'width': 640, 'height': 480, 'target_fps': 30, 'fourcc': 'MJPG', 'image_format': 'png'},
+    2: {'width': 1280, 'height': 720, 'target_fps': 30, 'fourcc': 'MJPG', 'image_format': 'png'},
+    3: {'width': 640, 'height': 480, 'target_fps': 30, 'fourcc': 'MJPG', 'image_format': 'png'},
 }
 
 
@@ -285,7 +285,7 @@ def _pick_profile_for_camera(cam: CameraInfo) -> ResolutionProfile:
 
 
 def interactive_configure(cameras: list[CameraInfo]) -> dict[int, dict]:
-    """Return {arm_id: params} with camera_index, width, height, fps, fourcc, image_format."""
+    """Return {arm_id: params} with camera_index, shape, target_fps, and format."""
     available = [c for c in cameras if c.available]
     if not available:
         print('No cameras available, nothing to assign.')
@@ -338,15 +338,15 @@ def interactive_configure(cameras: list[CameraInfo]) -> dict[int, dict]:
         w, h = profile.actual_wh
         max_fps = int(profile.real_fps)
 
-        # Suggest a target fps based on defaults, capped at measured max.
-        suggested_fps = DEFAULT_ARM_SUGGESTIONS[arm_id]['fps']
-        if suggested_fps > max_fps:
-            suggested_fps = max(1, max_fps)
+        # Suggest a target output fps based on defaults, capped at measured max.
+        suggested_target_fps = DEFAULT_ARM_SUGGESTIONS[arm_id]['target_fps']
+        if suggested_target_fps > max_fps:
+            suggested_target_fps = max(1, max_fps)
 
         print(f'\n  该配置实测最大帧率: {profile.real_fps:.2f} fps')
         while True:
-            fps = _input_int('  目标录制帧率', default=suggested_fps)
-            if 1 <= fps <= max_fps + 2:  # allow tiny rounding tolerance
+            target_fps = _input_int('  目标录制帧率', default=suggested_target_fps)
+            if 1 <= target_fps <= max_fps + 2:  # allow tiny rounding tolerance
                 break
             print(f'    请输入 1-{max_fps} 之间的值。')
 
@@ -360,7 +360,7 @@ def interactive_configure(cameras: list[CameraInfo]) -> dict[int, dict]:
             'camera_index': cam_idx,
             'width': w,
             'height': h,
-            'fps': fps,
+            'target_fps': target_fps,
             'fourcc': profile.fourcc,
             'image_format': image_format,
         }
@@ -373,6 +373,7 @@ def update_config(config_path: Path, arm_params: dict[int, dict]):
         data = yaml.safe_load(f)
 
     sources = data.get('sources', [])
+    camera_bindings = data.setdefault('camera_bindings', {})
     backup_path = config_path.with_suffix(config_path.suffix + '.bak')
     if not backup_path.exists():
         shutil.copy2(config_path, backup_path)
@@ -406,15 +407,27 @@ def update_config(config_path: Path, arm_params: dict[int, dict]):
             src['arm_id'] = arm_id
             src['backend'] = 'dshow'
             src['ready_timeout'] = 20.0
-            src['camera_index'] = params['camera_index']
+            src.pop('camera_index', None)
+            camera_bindings[f'arm_{arm_id}'] = params['camera_index']
             src['width'] = params['width']
             src['height'] = params['height']
-            src['fps'] = params['fps']
+            # `fps` selects the driver streaming mode; `target_fps` is the
+            # exact output rate produced by the software decimator. Preserve an
+            # existing tuned driver mode and only provide one for new sources.
+            if src.get('fps') is None:
+                src['fps'] = 60 if params['target_fps'] >= 30 else params['target_fps']
+            src['target_fps'] = params['target_fps']
             src['fourcc'] = params['fourcc']
             src['image_format'] = params['image_format']
+            if params['image_format'] == 'png':
+                src.setdefault('png_compression', 1)
+                if params['width'] * params['height'] >= 1280 * 720:
+                    src.setdefault('writer_threads', 2)
         else:
+            camera_bindings.pop(f'arm_{arm_id}', None)
             src['enabled'] = False
 
+    data['camera_bindings'] = camera_bindings
     data['sources'] = sources
     with open(config_path, 'w', encoding='utf-8') as f:
         yaml.dump(data, f, sort_keys=False, allow_unicode=True)
@@ -451,7 +464,7 @@ def main():
     for arm_id, params in sorted(arm_params.items()):
         print(
             f'  arm_{arm_id} <- camera {params["camera_index"]}  '
-            f'{params["width"]}x{params["height"]} @ {params["fps"]} fps  '
+            f'{params["width"]}x{params["height"]} @ {params["target_fps"]} fps  '
             f'{params["fourcc"]}  {params["image_format"]}'
         )
 

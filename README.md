@@ -15,6 +15,7 @@ pip install -r scripts/requirements.txt
 
 ```bash
 # 1. 分配摄像头到各条臂（含真实 FPS benchmark，会写回 scripts/config/default.yaml）
+#    当前硬件绑定集中写在 default.yaml 顶层 camera_bindings：arm_1=2, arm_2=0, arm_3=3
 scripts/tools/camera_assignment_setup.bat          # 双击（Windows）
 python scripts/tools/camera_assignment_setup.py    # 命令行
 
@@ -31,11 +32,11 @@ python scripts/tools/align_camera_anchor.py --session sessions/<session_name>
 ```text
 ├── scripts/
 │   ├── run_acquisition.py        # 采集入口
-│   ├── acquisition/              # 采集框架（Session + DataSource）
+│   ├── acquisition/              # 采集框架（Session + DataSource + registry/config/layout）
 │   │   ├── sources/              # twincat / usb_camera_process / reserved_arm
 │   │   │   └── legacy/           # 已弃用的线程版相机源（保留兼容）
 │   │   └── process_workers/      # 相机子进程 worker
-│   ├── config/                   # default / single_arm / three_cameras / example
+│   ├── config/                   # default / single_arm / example; historical configs are in archive/
 │   │   └── archive/              # 历史测试配置（不再使用）
 │   ├── tools/                    # 对齐、分析、相机分配、手动采集工具
 │   └── test/                     # TwinCAT benchmark 与诊断脚本

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -15,25 +16,31 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).parents[1]))
+
+from acquisition.session_layout import DEFAULT_CAMERA_NAMES, camera_metadata_path, resolve_robot_pose_csv
+from acquisition.clock_fit import fit_linear_timestamps
+
 
 def load_session_data(session_dir: Path) -> tuple[dict, pd.DataFrame, dict[str, pd.DataFrame]]:
     """Load session.json, robot_pose CSV, and camera metadata CSVs."""
     with open(session_dir / 'session.json', 'r', encoding='utf-8') as f:
         session_info = json.load(f)
 
-    robot_path = session_dir / 'robot_pose' / 'twincat_poses.csv'
-    robot_df = pd.read_csv(robot_path) if robot_path.exists() else None
+    robot_path = resolve_robot_pose_csv(session_dir, arm_id=1)
+    robot_df = pd.read_csv(robot_path) if robot_path is not None else None
 
     cameras = {}
-    for arm in ['camera_arm_1', 'camera_arm_2', 'camera_arm_3']:
-        meta_path = session_dir / arm / 'metadata.csv'
+    for arm in DEFAULT_CAMERA_NAMES:
+        meta_path = camera_metadata_path(session_dir, arm)
         if meta_path.exists():
-            cameras[arm] = pd.read_csv(meta_path)
+            # Multi-writer camera workers can interleave metadata rows.
+            cameras[arm] = pd.read_csv(meta_path).sort_values('timestamp_ns').reset_index(drop=True)
 
     return session_info, robot_df, cameras
 
 
-def analyze_twincat(robot_df: pd.DataFrame, out_dir: Path) -> dict:
+def analyze_twincat(robot_df: pd.DataFrame, out_dir: Path, make_plots: bool = True) -> dict:
     """Analyze TwinCAT sampling behavior."""
     print('\n=== TwinCAT 采样分析 ===')
     results = {}
@@ -65,82 +72,92 @@ def analyze_twincat(robot_df: pd.DataFrame, out_dir: Path) -> dict:
         results['rtt_mean_ms'] = rtt_ms.mean()
         results['rtt_std_ms'] = rtt_ms.std()
 
-        plt.figure(figsize=(10, 5))
-        plt.hist(rtt_ms, bins=80, color='steelblue', edgecolor='white')
-        plt.xlabel('ADS RTT (ms)')
-        plt.ylabel('Count')
-        plt.title('TwinCAT ADS Round-Trip Time Distribution')
-        plt.axvline(rtt_ms.mean(), color='red', linestyle='--', label=f'mean={rtt_ms.mean():.2f} ms')
-        plt.axvline(np.median(rtt_ms), color='green', linestyle='--', label=f'median={np.median(rtt_ms):.2f} ms')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(out_dir / 'twincat_rtt_histogram.png', dpi=150)
-        plt.close()
+        if make_plots:
+            plt.figure(figsize=(10, 5))
+            plt.hist(rtt_ms, bins=80, color='steelblue', edgecolor='white')
+            plt.xlabel('ADS RTT (ms)')
+            plt.ylabel('Count')
+            plt.title('TwinCAT ADS Round-Trip Time Distribution')
+            plt.axvline(rtt_ms.mean(), color='red', linestyle='--', label=f'mean={rtt_ms.mean():.2f} ms')
+            plt.axvline(np.median(rtt_ms), color='green', linestyle='--', label=f'median={np.median(rtt_ms):.2f} ms')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(out_dir / 'twincat_rtt_histogram.png', dpi=150)
+            plt.close()
 
-        plt.figure(figsize=(12, 5))
-        t0 = ts[0]
-        plt.plot((ts - t0) / 1e9, rtt_ms, linewidth=0.5, alpha=0.7)
-        plt.xlabel('Time (s)')
-        plt.ylabel('ADS RTT (ms)')
-        plt.title('TwinCAT ADS RTT Over Time')
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(out_dir / 'twincat_rtt_timeseries.png', dpi=150)
-        plt.close()
+            plt.figure(figsize=(12, 5))
+            t0 = ts[0]
+            plt.plot((ts - t0) / 1e9, rtt_ms, linewidth=0.5, alpha=0.7)
+            plt.xlabel('Time (s)')
+            plt.ylabel('ADS RTT (ms)')
+            plt.title('TwinCAT ADS RTT Over Time')
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(out_dir / 'twincat_rtt_timeseries.png', dpi=150)
+            plt.close()
 
     # Sampling interval over time
-    plt.figure(figsize=(12, 5))
-    t0 = ts[0]
-    plt.plot((ts[1:] - t0) / 1e9, dt_ms, linewidth=0.5, alpha=0.7)
-    plt.xlabel('Time (s)')
-    plt.ylabel('Sampling interval (ms)')
-    plt.title('TwinCAT Sampling Interval Over Time')
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'twincat_sampling_interval.png', dpi=150)
-    plt.close()
+    if make_plots:
+        plt.figure(figsize=(12, 5))
+        t0 = ts[0]
+        plt.plot((ts[1:] - t0) / 1e9, dt_ms, linewidth=0.5, alpha=0.7)
+        plt.xlabel('Time (s)')
+        plt.ylabel('Sampling interval (ms)')
+        plt.title('TwinCAT Sampling Interval Over Time')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(out_dir / 'twincat_sampling_interval.png', dpi=150)
+        plt.close()
 
     # Clock drift: PLC vs PC
     if 'timestamp_ns_pc' in robot_df.columns and 'timestamp_ns_plc' in robot_df.columns:
         pc = robot_df['timestamp_ns_pc'].values.astype(np.float64)
         plc = robot_df['timestamp_ns_plc'].values.astype(np.float64)
-        k, b = np.polyfit(pc, plc, 1)
-        predicted = k * pc + b
-        residuals = plc - predicted
+        clock_fit = fit_linear_timestamps(pc, plc)
+        k = clock_fit.slope
+        b = clock_fit.intercept
+        residuals = np.asarray(clock_fit.residuals, dtype=np.float64)
 
         print(f'  PLC-PC 时钟漂移模型: timestamp_ns_plc = {k:.12f} * timestamp_ns_pc + {b:.0f}')
         print(f'  频率偏差: {(k - 1.0) * 1e6:+.3f} ppm')
-        print(f'  残差标准差: {np.std(residuals):.0f} ns')
-        print(f'  残差最大绝对值: {np.max(np.abs(residuals)):.0f} ns')
+        print(f'  残差标准差: {clock_fit.residual_std:.0f} ns')
+        print(f'  残差最大绝对值: {clock_fit.residual_max_abs:.0f} ns')
 
         results['clock_drift_k'] = k
         results['clock_drift_b_ns'] = b
         results['clock_drift_ppm'] = (k - 1.0) * 1e6
-        results['clock_residual_std_ns'] = np.std(residuals)
-        results['clock_residual_max_ns'] = np.max(np.abs(residuals))
+        results['clock_residual_std_ns'] = clock_fit.residual_std
+        results['clock_residual_max_ns'] = clock_fit.residual_max_abs
 
-        plt.figure(figsize=(12, 5))
-        plt.plot((pc - pc[0]) / 1e9, residuals / 1e6, linewidth=0.5, alpha=0.7)
-        plt.xlabel('Time (s)')
-        plt.ylabel('PLC-PC clock residual (ms)')
-        plt.title('PLC vs PC Clock Drift Residual')
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(out_dir / 'twincat_clock_drift_residual.png', dpi=150)
-        plt.close()
+        if make_plots:
+            plt.figure(figsize=(12, 5))
+            plt.plot((pc - pc[0]) / 1e9, residuals / 1e6, linewidth=0.5, alpha=0.7)
+            plt.xlabel('Time (s)')
+            plt.ylabel('PLC-PC clock residual (ms)')
+            plt.title('PLC vs PC Clock Drift Residual')
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(out_dir / 'twincat_clock_drift_residual.png', dpi=150)
+            plt.close()
 
     return results
 
 
-def analyze_cameras(cameras: dict[str, pd.DataFrame], out_dir: Path) -> dict:
+def analyze_cameras(
+    cameras: dict[str, pd.DataFrame],
+    out_dir: Path,
+    make_plots: bool = True,
+) -> dict:
     """Analyze camera frame rate and timing stability."""
     print('\n=== 相机帧率分析 ===')
     results = {}
 
-    fig, axes = plt.subplots(len(cameras), 1, figsize=(12, 3 * len(cameras)), sharex=True)
-    if len(cameras) == 1:
-        axes = [axes]
+    axes = None
+    if make_plots:
+        _, axes = plt.subplots(len(cameras), 1, figsize=(12, 3 * len(cameras)), sharex=True)
+        if len(cameras) == 1:
+            axes = [axes]
 
     for idx, (arm, df) in enumerate(cameras.items()):
         ts = df['timestamp_ns'].values.astype(np.float64)
@@ -165,37 +182,46 @@ def analyze_cameras(cameras: dict[str, pd.DataFrame], out_dir: Path) -> dict:
             'dt_max_ms': dt_ms.max(),
         }
 
-        ax = axes[idx]
-        t0 = ts[0]
-        ax.plot((ts[1:] - t0) / 1e9, dt_ms, linewidth=0.5, alpha=0.7)
-        ax.set_ylabel('Frame interval (ms)')
-        ax.set_title(f'{arm}: target ~{1000/dt_ms.mean():.1f} fps, actual {fps:.2f} fps')
-        ax.grid(True, alpha=0.3)
-    axes[-1].set_xlabel('Time (s)')
-    plt.suptitle('Camera Frame Intervals Over Time', y=1.02)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'camera_frame_intervals.png', dpi=150)
-    plt.close()
+        if make_plots:
+            ax = axes[idx]
+            t0 = ts[0]
+            ax.plot((ts[1:] - t0) / 1e9, dt_ms, linewidth=0.5, alpha=0.7)
+            ax.set_ylabel('Frame interval (ms)')
+            ax.set_title(f'{arm}: target ~{1000/dt_ms.mean():.1f} fps, actual {fps:.2f} fps')
+            ax.grid(True, alpha=0.3)
+    if make_plots:
+        axes[-1].set_xlabel('Time (s)')
+        plt.suptitle('Camera Frame Intervals Over Time', y=1.02)
+        plt.tight_layout()
+        plt.savefig(out_dir / 'camera_frame_intervals.png', dpi=150)
+        plt.close()
 
-    # Histogram of frame intervals
-    plt.figure(figsize=(10, 6))
-    for arm, df in cameras.items():
-        ts = df['timestamp_ns'].values.astype(np.float64)
-        dt_ms = np.diff(ts) / 1e6
-        plt.hist(dt_ms, bins=60, alpha=0.6, label=arm, density=True)
-    plt.xlabel('Frame interval (ms)')
-    plt.ylabel('Density')
-    plt.title('Camera Frame Interval Distribution')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'camera_frame_interval_histogram.png', dpi=150)
-    plt.close()
+    if make_plots:
+        # Histogram of frame intervals
+        plt.figure(figsize=(10, 6))
+        for arm, df in cameras.items():
+            ts = df['timestamp_ns'].values.astype(np.float64)
+            dt_ms = np.diff(ts) / 1e6
+            plt.hist(dt_ms, bins=60, alpha=0.6, label=arm, density=True)
+        plt.xlabel('Frame interval (ms)')
+        plt.ylabel('Density')
+        plt.title('Camera Frame Interval Distribution')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(out_dir / 'camera_frame_interval_histogram.png', dpi=150)
+        plt.close()
 
     return results
 
 
-def analyze_cross_modal(session_info: dict, robot_df: pd.DataFrame, cameras: dict[str, pd.DataFrame], out_dir: Path) -> dict:
+def analyze_cross_modal(
+    session_info: dict,
+    robot_df: pd.DataFrame,
+    cameras: dict[str, pd.DataFrame],
+    out_dir: Path,
+    make_plots: bool = True,
+) -> dict:
     """Analyze cross-modal timing: start/stop overlap, latency.
 
     Uses the PC-axis timestamp for TwinCAT when available so that robot and
@@ -239,29 +265,30 @@ def analyze_cross_modal(session_info: dict, robot_df: pd.DataFrame, cameras: dic
         print(f'  {arm} 相对 TwinCAT 启动延迟: {delay_ms:.1f} ms')
         results[f'{arm}_start_delay_ms'] = delay_ms
 
-    # Gantt-like timeline
-    plt.figure(figsize=(12, 4))
-    labels = ['TwinCAT'] + list(cameras.keys())
-    starts = [robot_start] + [cam_ranges[a][0] for a in cameras.keys()]
-    stops = [robot_stop] + [cam_ranges[a][1] for a in cameras.keys()]
-    t0 = min(starts)
+    if make_plots:
+        # Gantt-like timeline
+        plt.figure(figsize=(12, 4))
+        labels = ['TwinCAT'] + list(cameras.keys())
+        starts = [robot_start] + [cam_ranges[a][0] for a in cameras.keys()]
+        stops = [robot_stop] + [cam_ranges[a][1] for a in cameras.keys()]
+        t0 = min(starts)
 
-    for i, (label, start, stop) in enumerate(zip(labels, starts, stops)):
-        plt.barh(i, (stop - start) / 1e9, left=(start - t0) / 1e9, height=0.5, alpha=0.7)
-        plt.text((start - t0) / 1e9 + 0.5, i, label, va='center', ha='left', color='black')
+        for i, (label, start, stop) in enumerate(zip(labels, starts, stops)):
+            plt.barh(i, (stop - start) / 1e9, left=(start - t0) / 1e9, height=0.5, alpha=0.7)
+            plt.text((start - t0) / 1e9 + 0.5, i, label, va='center', ha='left', color='black')
 
-    plt.yticks([])
-    plt.xlabel('Time (s)')
-    plt.title('Data Source Active Time Ranges')
-    plt.grid(True, alpha=0.3, axis='x')
-    plt.tight_layout()
-    plt.savefig(out_dir / 'cross_modal_timeline.png', dpi=150)
-    plt.close()
+        plt.yticks([])
+        plt.xlabel('Time (s)')
+        plt.title('Data Source Active Time Ranges')
+        plt.grid(True, alpha=0.3, axis='x')
+        plt.tight_layout()
+        plt.savefig(out_dir / 'cross_modal_timeline.png', dpi=150)
+        plt.close()
 
     return results
 
 
-def analyze_trajectory(robot_df: pd.DataFrame, out_dir: Path) -> dict:
+def analyze_trajectory(robot_df: pd.DataFrame, out_dir: Path, make_plots: bool = True) -> dict:
     """Analyze robot trajectory smoothness."""
     print('\n=== 机器人轨迹分析 ===')
     results = {}
@@ -276,7 +303,7 @@ def analyze_trajectory(robot_df: pd.DataFrame, out_dir: Path) -> dict:
     dt_s = np.diff(ts) / 1e9
 
     # Displacement per sample
-    displacements = np.linalg.norm(np.diff(pos, axis=0), axis=1)
+    displacements = np.sqrt(np.sum(np.diff(pos, axis=0) ** 2, axis=1))
     velocities = displacements / dt_s
 
     print(f'  总位移: {displacements.sum():.3f} mm')
@@ -289,28 +316,29 @@ def analyze_trajectory(robot_df: pd.DataFrame, out_dir: Path) -> dict:
     results['velocity_std_mm_s'] = velocities.std()
     results['velocity_max_mm_s'] = velocities.max()
 
-    # 3D trajectory
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot(pos[:, 0], pos[:, 1], pos[:, 2], linewidth=0.8, alpha=0.7)
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.set_title('End-Effector 3D Trajectory (ArmFrame)')
-    plt.tight_layout()
-    plt.savefig(out_dir / 'trajectory_3d.png', dpi=150)
-    plt.close()
+    if make_plots:
+        # 3D trajectory
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot(pos[:, 0], pos[:, 1], pos[:, 2], linewidth=0.8, alpha=0.7)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title('End-Effector 3D Trajectory (ArmFrame)')
+        plt.tight_layout()
+        plt.savefig(out_dir / 'trajectory_3d.png', dpi=150)
+        plt.close()
 
-    # Velocity over time
-    plt.figure(figsize=(12, 5))
-    plt.plot((ts[1:] - ts[0]) / 1e9, velocities, linewidth=0.5, alpha=0.7)
-    plt.xlabel('Time (s)')
-    plt.ylabel('Speed (mm/s)')
-    plt.title('End-Effector Speed Over Time')
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(out_dir / 'trajectory_speed.png', dpi=150)
-    plt.close()
+        # Velocity over time
+        plt.figure(figsize=(12, 5))
+        plt.plot((ts[1:] - ts[0]) / 1e9, velocities, linewidth=0.5, alpha=0.7)
+        plt.xlabel('Time (s)')
+        plt.ylabel('Speed (mm/s)')
+        plt.title('End-Effector Speed Over Time')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(out_dir / 'trajectory_speed.png', dpi=150)
+        plt.close()
 
     return results
 
@@ -319,6 +347,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='Comprehensive session analysis')
     parser.add_argument('--session', type=Path, required=True, help='Session directory')
     parser.add_argument('--out-dir', type=Path, default=None, help='Output directory')
+    parser.add_argument('--skip-plots', action='store_true',
+                        help='Compute metrics without generating matplotlib figures')
     args = parser.parse_args()
 
     session_dir = args.session
@@ -332,10 +362,13 @@ def main() -> int:
         return 1
 
     results = {}
-    results['twincat'] = analyze_twincat(robot_df, out_dir)
-    results['cameras'] = analyze_cameras(cameras, out_dir)
-    results['cross_modal'] = analyze_cross_modal(session_info, robot_df, cameras, out_dir)
-    results['trajectory'] = analyze_trajectory(robot_df, out_dir)
+    make_plots = not args.skip_plots
+    results['twincat'] = analyze_twincat(robot_df, out_dir, make_plots=make_plots)
+    results['cameras'] = analyze_cameras(cameras, out_dir, make_plots=make_plots)
+    results['cross_modal'] = analyze_cross_modal(
+        session_info, robot_df, cameras, out_dir, make_plots=make_plots,
+    )
+    results['trajectory'] = analyze_trajectory(robot_df, out_dir, make_plots=make_plots)
 
     # Save summary JSON
     summary_path = out_dir / 'analysis_summary.json'
@@ -343,9 +376,10 @@ def main() -> int:
         json.dump(results, f, indent=2, ensure_ascii=False, default=str)
     print(f'\n分析摘要已保存: {summary_path}')
 
-    print(f'\n所有图表已保存到: {out_dir}')
-    for p in sorted(out_dir.glob('*.png')):
-        print(f'  {p.name}')
+    if make_plots:
+        print(f'\n所有图表已保存到: {out_dir}')
+        for p in sorted(out_dir.glob('*.png')):
+            print(f'  {p.name}')
 
     return 0
 

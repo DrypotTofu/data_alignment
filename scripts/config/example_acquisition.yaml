@@ -1,113 +1,72 @@
-# Example VLGP acquisition session configuration.
-# Copy this file and adjust it for your actual hardware setup.
+# Example VLGP acquisition session configuration using the current framework.
+# Camera indices below match the current rig: arm_1=2, arm_2=0, arm_3=3.
 
-# Session output directory layout:
-#   <base_dir>/<session_name>/camera_wrist_left/...
-#   <base_dir>/<session_name>/camera_endoscope/...
-#   <base_dir>/<session_name>/robot_poses/...
 base_dir: ./sessions
 session_name: null  # null -> auto-generate from current UTC time
-
-# Unified timestamp source.
-#   host_realtime   : use time.time_ns() (default, easiest)
-#   twincat_master  : host time shifted to align with TwinCAT PLC time axis.
-#                     Requires a TwinCAT source with timestamp_mode=twincat.
-#                     Camera frames will share the same PLC CycleCount axis.
-#   manual_offset   : host time + clock_offset_ns
-#
-# If you configure NTP between PC and TwinCAT, use host_realtime and both
-# clocks will be in the same domain. Verify with:
-#   python test\check_clock_sync.py --ams-net-id 192.168.1.100.1.1
-#
-# Without NTP, set clock_source: twincat_master and use timestamp_mode: twincat
-# to make video and robot poses share the PLC time axis.
 clock_source: host_realtime
 clock_offset_ns: 0
+camera_bindings:
+  arm_1: 2
+  arm_2: 0
+  arm_3: 3
 
-# Data sources. Add more entries here as you add custom source types.
 sources:
-  - type: usb_camera
-    name: camera_wrist_left
-    camera_index: 0
-    topic_name: camera/wrist_left/image_raw
+  # Endoscope / main view. `fps` selects the fast driver stream, while
+  # `target_fps` is the exact output rate produced by the worker decimator.
+  - type: process_camera
+    name: camera_arm_2
+    topic_name: camera/arm_2/image_raw
+    arm_id: 2
+    width: 1280
+    height: 720
+    fps: 60
+    target_fps: 30
+    fourcc: MJPG
+    backend: dshow
+    image_format: png
+    png_compression: 1
+    writer_threads: 2
+    ready_timeout: 20.0
+
+  # Left wrist camera.
+  - type: process_camera
+    name: camera_arm_1
+    topic_name: camera/arm_1/image_raw
+    arm_id: 1
     width: 640
     height: 480
-    fps: 30
+    fps: 60
+    target_fps: 30
     fourcc: MJPG
-    save_images: true
+    backend: dshow
     image_format: png
+    ready_timeout: 20.0
 
-  - type: usb_camera
-    name: camera_wrist_right
-    camera_index: 1
-    topic_name: camera/wrist_right/image_raw
+  # Right wrist camera.
+  - type: process_camera
+    name: camera_arm_3
+    topic_name: camera/arm_3/image_raw
+    arm_id: 3
     width: 640
     height: 480
-    fps: 30
+    fps: 60
+    target_fps: 30
     fourcc: MJPG
-    save_images: true
+    backend: dshow
     image_format: png
+    ready_timeout: 20.0
 
-  # Multi-camera source: use this when you have two or more identical
-  # USB cameras. They are opened sequentially in a single thread, which
-  # avoids DirectShow conflicts. Each camera must use a different resolution.
-  # - type: usb_multi_camera
-  #   name: wrist_cameras
-  #   configs:
-  #     - camera_index: 1
-  #       topic_name: camera/wrist_left/image_raw
-  #       width: 640
-  #       height: 480
-  #       backend: dshow
-  #     - camera_index: 2
-  #       topic_name: camera/wrist_right/image_raw
-  #       width: 320
-  #       height: 240
-  #       backend: dshow
-
-  # Placeholder for the Hikvision endoscope. Replace mode with 'sdk',
-  # 'hdmi', or 'rtsp' once the integration path is decided.
-  - type: endoscope
-    name: camera_endoscope
-    topic_name: camera/endoscope/image_raw
-    mode: sdk
-    # ip: 192.168.1.64
-    # username: admin
-    # password: xxx
-    # width: 1920
-    # height: 1080
-    # fps: 30
-
-  # TwinCAT ADS source for the dVRK-style robot controller.
-  # These values match the controller currently connected at 192.168.22.22.
+  # TwinCAT ADS source for all four robot arms. If `symbols` and
+  # `symbol_shapes` are omitted, TwinCATConfig uses the full 8-symbol defaults.
   - type: twincat
-    name: robot_poses
+    name: robot_pose
     topic_name: robot/pose
     ams_net_id: 169.254.226.99.1.1
     ams_port: 851
     ip_address: 192.168.22.22
     cycle_period_ms: 1.0
     selected_arm: 1
-    # timestamp_mode:
-    #   'twincat'    -> read a PLC timestamp symbol (not available on this robot)
-    #   'pc_arrival' -> use PC time when ADS response arrives (recommended)
-    #   'pc_cycle'   -> use PC time at start of each read cycle
-    timestamp_mode: pc_arrival
-    symbols:
-      joint_angles: Sir_RunRunShaw_Database.Joint_Angles
-      armframe_positions: Sir_RunRunShaw_Database.EndEffector_Coordinate_ArmFrame
-      scopeframe_positions: Sir_RunRunShaw_Database.EndEffector_Coordinate_ScopeFrame
-      orientations: Sir_RunRunShaw_Database.EndEffector_Orientation
-      instrument_types: Sir_RunRunShaw_Database.Instrument_Type
-      gripper_angle: Sir_RunRunShaw_Database.Gripper_Angle
-      gripper_signal: Sir_RunRunShaw_Database.Gripper_Signal
-      energy_instrument_status: Sir_RunRunShaw_Database.EnergyInstrument_Status
-    symbol_shapes:
-      joint_angles: [4, 12]
-      armframe_positions: [4, 3]
-      scopeframe_positions: [4, 3]
-      orientations: [4, 4]
-      instrument_types: [4]
-      gripper_angle: [4]
-      gripper_signal: [4]
-      energy_instrument_status: [4]
+    timestamp_mode: twincat
+    use_rtt_correction: true
+    output_dual_timestamps: true
+    output_all_arms: true

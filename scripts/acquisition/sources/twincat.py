@@ -580,12 +580,14 @@ class TwinCATWriter:
         self.source_name = source_name
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self._base_writer = _TwinCATCsvWriter(self.out_dir / 'twincat_poses.csv')
+        self._base_writer: _TwinCATCsvWriter | None = None
         self._arm_writers: dict[str, _TwinCATCsvWriter] = {}
 
     def _arm_writer(self, source_name: str) -> _TwinCATCsvWriter:
         """Return (creating if necessary) the CSV writer for a source name."""
         if source_name == self.source_name:
+            if self._base_writer is None:
+                self._base_writer = _TwinCATCsvWriter(self.out_dir / 'twincat_poses.csv')
             return self._base_writer
         writer = self._arm_writers.get(source_name)
         if writer is None:
@@ -604,7 +606,8 @@ class TwinCATWriter:
         writer.write(row)
 
     def close(self) -> None:
-        self._base_writer.close()
+        if self._base_writer is not None:
+            self._base_writer.close()
         for writer in self._arm_writers.values():
             writer.close()
 

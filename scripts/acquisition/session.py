@@ -16,7 +16,7 @@ Directory layout for each recording session:
 Adding a new modality:
   1. Subclass `DataSource` in `acquisition/sources/<modality>.py`.
   2. Provide a matching writer class if the source produces data to disk.
-  3. Register the source factory in `run_acquisition.py` or in the YAML config.
+  3. Register the source and writer factories in `acquisition.registry`.
 """
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ from queue import Empty, Queue
 from typing import Any, Callable
 
 from .base_source import DataSample, DataSource
+from .registry import create_writer_for_source
 from .timestamp import ClockConfig, TimestampSource, UnifiedTimestamp, ns_to_beijing_iso8601
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,14 @@ class AcquisitionSession:
         # Create writers for known built-in sources.
         # A source may produce samples under multiple keys (e.g. multi-camera).
         for source in self._sources.values():
-            writer = self._create_writer(source)
+            writer = create_writer_for_source(source, self.session_dir / source.name)
+            if writer is None:
+                if source.get_writer_keys():
+                    logger.warning(
+                        'No disk writer registered for source type %s',
+                        type(source).__name__,
+                    )
+                continue
             for key in source.get_writer_keys():
                 self._writers[key] = writer
 
@@ -246,30 +254,9 @@ class AcquisitionSession:
         finally:
             # Close writers from within the writer thread to avoid races with
             # the main thread calling stop().
-            for writer in self._writers.values():
+            for writer in dict.fromkeys(self._writers.values()):
                 if hasattr(writer, 'close'):
                     writer.close()
-
-    def _create_writer(self, source: DataSource) -> Any:
-        """Factory that creates the appropriate writer for a source."""
-        from .sources.legacy.usb_camera import USBCameraSource, USBCameraWriter
-        from .sources.legacy.usb_multi_camera import USBMultiCameraSource, USBMultiCameraWriter
-        from .sources.legacy.endoscope import EndoscopeSource, EndoscopeWriter
-        from .sources.twincat import TwinCATSource, TwinCATWriter
-
-        source_dir = self.session_dir / source.name
-        if isinstance(source, USBCameraSource):
-            return USBCameraWriter(source.name, source_dir, image_format=source.config.image_format)
-        if isinstance(source, USBMultiCameraSource):
-            return USBMultiCameraWriter(source.name, source_dir)
-        if isinstance(source, EndoscopeSource):
-            return EndoscopeWriter(source.name, source_dir)
-        if isinstance(source, TwinCATSource):
-            return TwinCATWriter(source.name, source_dir)
-
-        # Fallback: no writer. You can add custom writers here.
-        logger.warning('No disk writer registered for source type %s', type(source).__name__)
-        return None
 
     @staticmethod
     def _enrich_source_summary(src: DataSource) -> dict[str, Any]:

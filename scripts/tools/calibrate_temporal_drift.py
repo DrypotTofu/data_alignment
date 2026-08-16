@@ -22,7 +22,9 @@ import csv
 import sys
 from pathlib import Path
 
-import numpy as np
+sys.path.insert(0, str(Path(__file__).parents[1]))
+
+from acquisition.clock_fit import fit_linear_timestamps
 
 
 def load_twincat_samples(path: Path) -> list[dict[str, str]]:
@@ -69,22 +71,19 @@ def fit_drift_model(
             'Try a smaller --sample-interval.'
         )
 
-    xs_arr = np.asarray(xs, dtype=np.float64)
-    ys_arr = np.asarray(ys, dtype=np.float64)
-
     # Linear fit: y = k*x + b
-    k, b = np.polyfit(xs_arr, ys_arr, 1)
+    fit = fit_linear_timestamps(xs, ys)
+    k = fit.slope
+    b = fit.intercept
 
-    predicted = k * xs_arr + b
-    residuals = ys_arr - predicted
     diagnostics = {
-        'samples_used': len(xs),
+        'samples_used': fit.samples,
         'duration_s': (xs[-1] - xs[0]) / 1e9,
-        'k': float(k),
-        'b_ns': float(b),
-        'residual_mean_ns': float(np.mean(residuals)),
-        'residual_std_ns': float(np.std(residuals)),
-        'residual_max_abs_ns': float(np.max(np.abs(residuals))),
+        'k': fit.slope,
+        'b_ns': fit.intercept,
+        'residual_mean_ns': fit.residual_mean,
+        'residual_std_ns': fit.residual_std,
+        'residual_max_abs_ns': fit.residual_max_abs,
     }
     return k, b, diagnostics
 

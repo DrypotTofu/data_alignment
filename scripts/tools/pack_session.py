@@ -33,6 +33,10 @@ import numpy as np
 import pandas as pd
 import cv2
 
+sys.path.insert(0, str(Path(__file__).parents[1]))
+
+from acquisition.session_layout import find_per_arm_robot_pose_csvs, legacy_robot_pose_path
+
 FFV1_ARGS = ['-c:v', 'ffv1', '-level', '3', '-coder', '1', '-context', '1',
              '-g', '1', '-slices', '24', '-slicecrc', '1']
 
@@ -151,7 +155,7 @@ def pack_robot_pose(session_dir: Path, out_dir: Path) -> list[dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
     results = []
 
-    per_arm = sorted(pose_root.glob('robot_pose_arm*/twincat_poses.csv'))
+    per_arm = list(find_per_arm_robot_pose_csvs(session_dir).values())
     if per_arm:
         for csv_path in per_arm:
             arm_name = csv_path.parent.name
@@ -162,8 +166,8 @@ def pack_robot_pose(session_dir: Path, out_dir: Path) -> list[dict]:
                             'parquet': out_path.name, 'bytes': out_path.stat().st_size})
         return results
 
-    legacy = pose_root / 'twincat_poses.csv'
-    if legacy.exists():
+    legacy = legacy_robot_pose_path(session_dir)
+    if legacy is not None:
         df = pd.read_csv(legacy)
         out_path = out_dir / 'robot_pose.parquet'
         df.to_parquet(out_path, index=False, compression='zstd')

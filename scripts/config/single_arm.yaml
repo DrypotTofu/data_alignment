@@ -1,7 +1,9 @@
 base_dir: ./sessions
-session_name: single_arm_test
+session_name: null
 clock_source: host_realtime
 clock_offset_ns: 0
+camera_bindings:
+  arm_2: 0
 sources:
 - type: twincat
   name: robot_pose
@@ -49,37 +51,15 @@ sources:
     - 4
 - type: process_camera
   name: camera_arm_2
-  camera_index: 0
   topic_name: camera/arm_2/image_raw
   arm_id: 2
   width: 1280
   height: 720
-  fps: 30
+  fps: 60
+  target_fps: 30
   fourcc: MJPG
   backend: dshow
-  image_format: jpg
-  ready_timeout: 20.0
-- type: process_camera
-  name: camera_arm_1
-  camera_index: 1
-  topic_name: camera/arm_1/image_raw
-  arm_id: 1
-  width: 640
-  height: 480
-  fps: 22
-  fourcc: MJPG
-  backend: dshow
-  image_format: jpg
-  ready_timeout: 20.0
-- type: process_camera
-  name: camera_arm_3
-  camera_index: 3
-  topic_name: camera/arm_3/image_raw
-  arm_id: 3
-  width: 640
-  height: 480
-  fps: 22
-  fourcc: MJPG
-  backend: dshow
-  image_format: jpg
+  image_format: png
+  png_compression: 1
+  writer_threads: 2
   ready_timeout: 20.0
