@@ -11,8 +11,9 @@ Pipeline for each anchor frame with PLC-axis time ``t``:
      ``timestamp_ns_pc``).
   2. Find the temporally nearest frame from every other camera and record the
      alignment error.
-  3. Interpolate every robot arm's pose to ``t``: LERP for positions and
-     scalar signals, SLERP for orientation quaternions, nearest sample for
+  3. Interpolate every robot arm's pose to ``t``: LERP for positions
+     (base ``position_*`` and scope frame ``scope_position_*``) and scalar
+     signals, SLERP for orientation quaternions, nearest sample for
      discrete states (instrument type, energy status).
 
 Supports both layouts:
@@ -27,12 +28,24 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-POSE_COLS = ['position_x', 'position_y', 'position_z']
+sys.path.insert(0, str(Path(__file__).parents[1]))
+
+from acquisition.session_layout import (
+    camera_metadata_path,
+    find_per_arm_robot_pose_csvs,
+    legacy_robot_pose_path,
+    robot_pose_root,
+)
+from acquisition.clock_fit import LinearClockFit, fit_linear_timestamps
+
+POSE_COLS = ['position_x', 'position_y', 'position_z',
+             'scope_position_x', 'scope_position_y', 'scope_position_z']
 ORIENT_COLS = ['orientation_w', 'orientation_x', 'orientation_y', 'orientation_z']
 # Continuous scalar signals interpolated linearly when present.
 LERP_COLS = ['gripper_angle', 'gripper_signal']
@@ -40,44 +53,40 @@ LERP_COLS = ['gripper_angle', 'gripper_signal']
 NEAREST_COLS = ['instrument_type', 'energy_instrument_status']
 
 
-def fit_plc_pc_model(robot_df: pd.DataFrame) -> tuple[float, float, dict]:
+def fit_plc_pc_model(robot_df: pd.DataFrame) -> tuple[LinearClockFit, dict]:
     """Fit timestamp_ns (PLC) = k * timestamp_ns_pc (PC) + b."""
     pc = robot_df['timestamp_ns_pc'].values.astype(np.float64)
     plc = robot_df['timestamp_ns'].values.astype(np.float64)
-    k, b = np.polyfit(pc, plc, 1)
-    residuals = plc - (k * pc + b)
+    fit = fit_linear_timestamps(pc, plc)
     diag = {
-        'k': float(k),
-        'b_ns': float(b),
-        'samples': len(pc),
+        'k': fit.slope,
+        'b_ns': fit.intercept,
+        'samples': fit.samples,
         'duration_s': (pc[-1] - pc[0]) / 1e9,
-        'residual_std_ms': float(np.std(residuals) / 1e6),
-        'residual_max_abs_ms': float(np.max(np.abs(residuals)) / 1e6),
-        'freq_ppm': float((k - 1.0) * 1e6),
+        'residual_std_ms': fit.residual_std / 1e6,
+        'residual_max_abs_ms': fit.residual_max_abs / 1e6,
+        'freq_ppm': (fit.slope - 1.0) * 1e6,
     }
-    return k, b, diag
+    return fit, diag
 
 
 def load_robot_arms(session_dir: Path) -> dict[int, pd.DataFrame]:
     """Load per-arm robot pose dataframes, keyed by arm id (1..4)."""
     arms: dict[int, pd.DataFrame] = {}
-    pose_root = session_dir / 'robot_pose'
 
     # Preferred multi-arm layout.
-    for arm_id in range(1, 5):
-        path = pose_root / f'robot_pose_arm{arm_id}' / 'twincat_poses.csv'
-        if path.exists():
-            df = pd.read_csv(path)
-            df = df.sort_values('timestamp_ns').reset_index(drop=True)
-            arms[arm_id] = df
-            print(f'robot_pose arm{arm_id}: {len(df)} rows from {path}')
+    for arm_id, path in find_per_arm_robot_pose_csvs(session_dir).items():
+        df = pd.read_csv(path)
+        df = df.sort_values('timestamp_ns').reset_index(drop=True)
+        arms[arm_id] = df
+        print(f'robot_pose arm{arm_id}: {len(df)} rows from {path}')
 
     if arms:
         return arms
 
     # Legacy single CSV, possibly containing an `arm` column.
-    legacy = pose_root / 'twincat_poses.csv'
-    if legacy.exists():
+    legacy = legacy_robot_pose_path(session_dir)
+    if legacy is not None:
         df = pd.read_csv(legacy)
         df = df.sort_values('timestamp_ns').reset_index(drop=True)
         if 'arm' in df.columns:
@@ -88,7 +97,7 @@ def load_robot_arms(session_dir: Path) -> dict[int, pd.DataFrame]:
         print(f'robot_pose (legacy): {len(df)} rows, arms={sorted(arms)}')
         return arms
 
-    raise FileNotFoundError(f'No robot pose CSV found under {pose_root}')
+    raise FileNotFoundError(f'No robot pose CSV found under {robot_pose_root(session_dir)}')
 
 
 def unwrap_quaternions(quat: np.ndarray) -> np.ndarray:
@@ -172,14 +181,14 @@ def build_camera_anchor_alignment(
 
     # Fit the PLC-PC drift model on the arm with the most samples.
     ref_arm = max(arms, key=lambda a: len(arms[a]))
-    k, b, diag = fit_plc_pc_model(arms[ref_arm])
-    print(f'PLC-PC drift model fitted on arm{ref_arm}: k={k:.12f}, b={b:.0f} ns, '
+    clock_fit, diag = fit_plc_pc_model(arms[ref_arm])
+    print(f'PLC-PC drift model fitted on arm{ref_arm}: k={clock_fit.slope:.12f}, b={clock_fit.intercept:.0f} ns, '
           f'residual std={diag["residual_std_ms"]:.3f} ms, max={diag["residual_max_abs_ms"]:.3f} ms')
 
     # Load camera metadata; timestamps mapped to the PLC axis.
     cameras: dict[str, dict] = {}
     for name in [anchor, *other_cameras]:
-        meta_path = session_dir / name / 'metadata.csv'
+        meta_path = camera_metadata_path(session_dir, name)
         if not meta_path.exists():
             print(f'{name}: metadata.csv not found, skipping')
             continue
@@ -189,7 +198,7 @@ def build_camera_anchor_alignment(
         pc = df['timestamp_ns'].values.astype(np.float64)
         cameras[name] = {
             'df': df,
-            'plc': k * pc + b,
+            'plc': np.asarray([clock_fit.predict(x) for x in pc], dtype=np.float64),
         }
     if anchor not in cameras:
         raise FileNotFoundError(f'Anchor camera metadata not found: {anchor}')
