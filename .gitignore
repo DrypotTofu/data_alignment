@@ -2,6 +2,7 @@
 raw_data/
 sample_data/
 coarse_alignment_data/
+calibrations/
 
 # Generated session outputs
 scripts/sessions/
