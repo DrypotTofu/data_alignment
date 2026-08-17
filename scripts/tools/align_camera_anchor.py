@@ -109,6 +109,37 @@ def unwrap_quaternions(quat: np.ndarray) -> np.ndarray:
     return out
 
 
+def prepare_arm_data(arm_df: pd.DataFrame) -> dict:
+    """Precompute per-arm interpolation arrays once (not per anchor frame).
+
+    For a full 10-min session this is O(rows) instead of O(rows x anchor
+    frames) — the previous per-frame ``unwrap_quaternions``/``np.interp``
+    calls made long sessions take tens of minutes.
+    """
+    ts = arm_df['timestamp_ns'].values.astype(np.float64)
+    data: dict = {'ts': ts}
+    data['positions'] = {
+        col: arm_df[col].values.astype(np.float64)
+        for col in POSE_COLS if col in arm_df.columns
+    }
+    if all(c in arm_df.columns for c in ORIENT_COLS):
+        data['quat'] = unwrap_quaternions(
+            arm_df[ORIENT_COLS].values.astype(np.float64))
+    data['lerp'] = {
+        col: arm_df[col].values.astype(np.float64)
+        for col in LERP_COLS if col in arm_df.columns
+    }
+    data['joints'] = {
+        col: arm_df[col].values.astype(np.float64)
+        for col in arm_df.columns if col.startswith('joint_')
+    }
+    data['nearest'] = {
+        col: arm_df[col].values
+        for col in NEAREST_COLS if col in arm_df.columns
+    }
+    return data
+
+
 def slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
     """Spherical linear interpolation between two unit quaternions."""
     dot = float(np.dot(q0, q1))
@@ -131,9 +162,12 @@ def nearest_idx(ts: np.ndarray, t: float) -> int:
     return idx - 1 if abs(t - ts[idx - 1]) <= abs(t - ts[idx]) else idx
 
 
-def interp_arm_pose(arm_df: pd.DataFrame, t: float) -> dict | None:
-    """Interpolate one arm's pose at PLC time t. None if outside range."""
-    ts = arm_df['timestamp_ns'].values.astype(np.float64)
+def interp_arm_pose(arm_data: dict, t: float) -> dict | None:
+    """Interpolate one arm's pose at PLC time t using precomputed arrays.
+
+    None if outside the arm's timestamp range.
+    """
+    ts = arm_data['ts']
     if t < ts[0] or t > ts[-1]:
         return None
 
@@ -144,28 +178,24 @@ def interp_arm_pose(arm_df: pd.DataFrame, t: float) -> dict | None:
 
     out: dict[str, float] = {}
 
-    for col in POSE_COLS:
-        if col in arm_df.columns:
-            out[col] = float(np.interp(t, ts, arm_df[col].values.astype(np.float64)))
+    for col, vals in arm_data['positions'].items():
+        out[col] = float(vals[idx - 1] + alpha * (vals[idx] - vals[idx - 1]))
 
-    if all(c in arm_df.columns for c in ORIENT_COLS):
-        quat = unwrap_quaternions(arm_df[ORIENT_COLS].values.astype(np.float64))
+    quat = arm_data.get('quat')
+    if quat is not None:
         q = slerp(quat[idx - 1], quat[idx], alpha)
         for c, v in zip(ORIENT_COLS, q):
             out[c] = float(v)
 
-    for col in LERP_COLS:
-        if col in arm_df.columns:
-            out[col] = float(np.interp(t, ts, arm_df[col].values.astype(np.float64)))
+    for col, vals in arm_data['lerp'].items():
+        out[col] = float(vals[idx - 1] + alpha * (vals[idx] - vals[idx - 1]))
 
-    joint_cols = [c for c in arm_df.columns if c.startswith('joint_')]
-    for col in joint_cols:
-        out[col] = float(np.interp(t, ts, arm_df[col].values.astype(np.float64)))
+    for col, vals in arm_data['joints'].items():
+        out[col] = float(vals[idx - 1] + alpha * (vals[idx] - vals[idx - 1]))
 
     near = nearest_idx(ts, t)
-    for col in NEAREST_COLS:
-        if col in arm_df.columns:
-            out[col] = arm_df[col].iloc[near]
+    for col, vals in arm_data['nearest'].items():
+        out[col] = vals[near]
 
     return out
 
@@ -203,6 +233,11 @@ def build_camera_anchor_alignment(
     if anchor not in cameras:
         raise FileNotFoundError(f'Anchor camera metadata not found: {anchor}')
 
+    # Precompute per-arm interpolation arrays once (O(rows)), not per anchor
+    # frame — required for 10-min sessions (18k frames x 190k rows otherwise).
+    arm_data = {arm_id: prepare_arm_data(arm_df)
+                for arm_id, arm_df in arms.items()}
+
     anchor_cam = cameras[anchor]
     robot_ts_min = min(arm['timestamp_ns'].min() for arm in arms.values())
     robot_ts_max = max(arm['timestamp_ns'].max() for arm in arms.values())
@@ -235,7 +270,7 @@ def build_camera_anchor_alignment(
 
         if out_row['pose_valid']:
             for arm_id, arm_df in arms.items():
-                pose = interp_arm_pose(arm_df, t_plc)
+                pose = interp_arm_pose(arm_data[arm_id], t_plc)
                 if pose is None:
                     continue
                 for col, val in pose.items():
