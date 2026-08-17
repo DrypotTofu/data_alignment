@@ -3,7 +3,7 @@ session_name: null
 clock_source: host_realtime
 clock_offset_ns: 0
 camera_bindings:
-  arm_1: 2
+  arm_1: 1
   arm_2: 0
   arm_3: 3
 sources:
@@ -63,7 +63,7 @@ sources:
   backend: dshow
   image_format: png
   png_compression: 1
-  writer_threads: 2
+  writer_threads: 6
   ready_timeout: 20.0
 - type: process_camera
   name: camera_arm_1
@@ -76,6 +76,7 @@ sources:
   fourcc: MJPG
   backend: dshow
   image_format: png
+  writer_threads: 2
   ready_timeout: 20.0
 - type: process_camera
   name: camera_arm_3

@@ -15,7 +15,7 @@ pip install -r scripts/requirements.txt
 
 ```bash
 # 1. 分配摄像头到各条臂（含真实 FPS benchmark，会写回 scripts/config/default.yaml）
-#    当前硬件绑定集中写在 default.yaml 顶层 camera_bindings：arm_1=2, arm_2=0, arm_3=3
+#    当前硬件绑定集中写在 default.yaml 顶层 camera_bindings：arm_1=1, arm_2=0, arm_3=3
 scripts/tools/camera_assignment_setup.bat          # 双击（Windows）
 python scripts/tools/camera_assignment_setup.py    # 命令行
 
@@ -50,7 +50,9 @@ python scripts/tools/align_camera_anchor.py --session sessions/<session_name>
 
 ## 更多文档
 
-- **项目状态与技术备忘**（主文档）：`tech_repo/VLGP_项目状态与技术备忘_20260803.md`
+- **项目状态备忘（当前快照，2026-08-16）**：`tech_repo/VLGP_项目状态与技术备忘_20260816.md`
+- **项目状态与技术备忘**（详细技术背景主文档）：`tech_repo/VLGP_项目状态与技术备忘_20260803.md`
+- 执行 Agent 任务交接与验收标准：`AGENT_HANDOFF.md`
 - 技术文档 / 进展报告：`tech_repo/VLGP_项目技术文档_20260719.md`、`tech_repo/VLGP_项目进展报告_20260719.md`
 - 会话恢复检查点：`SESSION_CHECKPOINT.md`
 - Agent 开发约定：`scripts/AGENTS.md`

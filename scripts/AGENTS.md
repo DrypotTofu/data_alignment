@@ -46,7 +46,7 @@ Current built-in sources:
 
 ## Camera Bindings
 
-Current YAML configs keep hardware mapping in top-level `camera_bindings` (`arm_1: 2`, `arm_2: 0`, `arm_3: 3`) and keep acquisition parameters (`width`, `fps`, `target_fps`, format) on each source. Direct per-source `camera_index` remains supported for old configs, but new edits should update `camera_bindings`; both assignment tools maintain that field.
+Current YAML configs keep hardware mapping in top-level `camera_bindings` (`arm_1: 1`, `arm_2: 0`, `arm_3: 3`) and keep acquisition parameters (`width`, `fps`, `target_fps`, format) on each source. Direct per-source `camera_index` remains supported for old configs, but new edits should update `camera_bindings`; both assignment tools maintain that field.
 
 ## Housekeeping
 
