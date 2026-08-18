@@ -121,12 +121,23 @@ class ReviewWindow(QMainWindow):
         self.manifest_path = manifest_path
 
         align_path = session_dir / ALIGN_REL
-        if not align_path.exists():
-            raise FileNotFoundError(f'Alignment CSV not found: {align_path}\n'
-                                    f'Run align_camera_anchor.py first.')
-        self.align = pd.read_csv(align_path)
-        self.align = self.align.sort_values('anchor_timestamp_ns_plc').reset_index(drop=True)
+        if align_path.exists():
+            self.align = pd.read_csv(align_path)
+            self.align = self.align.sort_values('anchor_timestamp_ns_plc').reset_index(drop=True)
+            self.has_alignment = True
+        else:
+            # Sessions that failed before alignment (e.g. capture startup
+            # issues) still need to be reviewable so they can be rejected.
+            # Build a rough table from the cameras' metadata.csv files;
+            # timestamps are matched approximately and robot columns are
+            # absent (the motion curve simply shows nothing).
+            self.align = self._build_fallback_table()
+            self.has_alignment = False
         self.n_rows = len(self.align)
+        if self.n_rows == 0:
+            raise FileNotFoundError(
+                f'No alignment CSV and no camera metadata found under {session_dir}.\n'
+                f'Nothing to review. Run align_camera_anchor.py first for good sessions.')
 
         self.annotations = self._load_annotations()
         self.status = self.annotations.get('status', 'pending')
@@ -146,9 +157,51 @@ class ReviewWindow(QMainWindow):
         self.prefetcher.want(0)
         self.show_frame(0)
 
+    def _build_fallback_table(self) -> pd.DataFrame:
+        """Approximate review table from camera metadata.csv files.
+
+        Used only when the alignment CSV is missing (broken session). The
+        camera with the most frames becomes the anchor; the others are
+        nearest-timestamp matched within 50 ms. Trim rows recorded in this
+        mode do NOT map to build_srth_dataset.py alignment rows — the session
+        should normally end up rejected anyway.
+        """
+        metas = {}
+        for cam in CAMERA_ORDER:
+            meta_path = self.session_dir / cam / 'metadata.csv'
+            if meta_path.exists():
+                df = pd.read_csv(meta_path)
+                if len(df):
+                    metas[cam] = df.sort_values('timestamp_ns').reset_index(drop=True)
+        columns = ['anchor_timestamp_ns_plc'] + list(FILENAME_COLS.values())
+        if not metas:
+            return pd.DataFrame(columns=columns)
+        anchor_cam = max(metas, key=lambda c: len(metas[c]))
+        table = metas[anchor_cam][['timestamp_ns', 'filename']].rename(columns={
+            'timestamp_ns': 'anchor_timestamp_ns_plc',
+            'filename': FILENAME_COLS[anchor_cam],
+        })
+        for cam, df in metas.items():
+            if cam == anchor_cam:
+                continue
+            right = df[['timestamp_ns', 'filename']].rename(
+                columns={'filename': FILENAME_COLS[cam]})
+            table = pd.merge_asof(
+                table, right,
+                left_on='anchor_timestamp_ns_plc', right_on='timestamp_ns',
+                direction='nearest', tolerance=50_000_000,  # 50 ms
+            ).drop(columns=['timestamp_ns'])
+        for cam in CAMERA_ORDER:
+            if FILENAME_COLS[cam] not in table.columns:
+                table[FILENAME_COLS[cam]] = None
+        return table
+
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
-        self.setWindowTitle(f'Review — {self.session_dir.name}')
+        title = f'Review — {self.session_dir.name}'
+        if not self.has_alignment:
+            title += '  [NO ALIGNMENT — fallback view]'
+        self.setWindowTitle(title)
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
