@@ -27,17 +27,21 @@
 12. **T7/T8/T9 落地（2026-08-17）**：新增 `scripts/tools/collect_calibration.py`（标定板采集+内参计算，示例记录 `calibrations/calib_example_synthetic/`）、`scripts/tools/write_session_meta.py`（session 元数据工具）；规范文档 `tech_repo/VLGP_标定与元数据规范_20260817.md`、沟通文档 `tech_repo/T9_PLC四元数坐标系确认_20260817.md`。
 13. **T8-集成完成（2026-08-18）**：`build_srth_dataset.py` 自动读取 `<session>/session_meta.json`，将 `task_instruction`/`task_type`/`organ_model`/`instruments`/`camera_calibration` 等透传进 episode `language.json` 与 `meta.json`；在 `sessions/20260817_124143` 填入示例 `session_meta.json` 重建 episode 验证 ✅（episode `sessions/20260817_124143/srth_episode`）。
 14. **T4 三路 30 Hz 全量验证通过（2026-08-18）**：session `sessions/20260818_080808`（30 s）——arm_1 30.028 / arm_2 30.011 / arm_3 30.026 fps（≥29.9 ✅）；对齐误差 mean ~0.9 ms；机器人有效区间内覆盖率 100%。两处待 PM 决策/知悉：① arm_2 帧间隔 std 10.6 ms 超 6 ms 验收线（720p PNG L1 写盘抖动，PNG0/JPG 可降但存储 150 GB/30min）；② 30 s session 全局覆盖率 77.5% 系相机 pre-roll（~8.5 s 启动开销）所致，10 min 为 98.5%，数据集构建已按 pose_valid 过滤不受影响。
+15. **T11 定稿（2026-08-18，用户接受）**：arm_1/arm_3 启用自动白平衡（`auto_wb: 1`），手动色温 5000/4300K 作 fallback；worker 修复 AWB 与手动色温互斥问题；`camera_param_tuner.py` 实时调参工具（trackbar 范围映射修复 + DRIVER REJECTED 提示）。实测 AWB 优于手动（白纸中性 6.1%、R-clip 0.76%/1.9%、帧间稳定）；20 s session `test_awb_20260818` 目检接受。
+16. **T10 v1 完成（2026-08-18）**：`scripts/tools/review_session.py`（PyQt5 三路同步视图 + 运动量曲线 + IN/OUT + 批量队列）+ `build_srth_dataset.py` 集成 annotations.json（rejected 跳过 / trim 过滤 / meta 记录）。逻辑验收通过（trim 15116→10160 行、episode 10100 样本）；GUI 实机完整评审待桌面操作。
 
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。
 - T2 ✅（2026-08-16）：`build_srth_dataset.py` 实现 + 离线验证通过；待真实任务 demo 验证动作数值与 mask 约定。
 - T3 ✅（2026-08-17）：10 分钟长稳测试通过（session `20260817_124143`）；30 min 版本可随 T6 一并复验。
-- T4 ✅（2026-08-18）：三路 30 Hz 全量验证通过（session `20260818_080808`）；arm_2 帧间隔 std 超标待 PM 决策。
+- T4 ✅（2026-08-18）：三路 30 Hz 全量验证通过（session `20260818_080808`）。
 - T5+T6：端到端试跑（**需机器人可动**：已知方向平移 → gripper 开合实测 → 触针/抓针演示 + 30 min 长稳复验；里程碑验收）。
-- T7：标定流程与工具已落地；真实标定板采集待现场执行。
-- T8 ✅（2026-08-18）：工具 + 集成完成（`build_srth_dataset.py` 透传 session_meta）；session.json 加 camera_calibration 字段仍暂缓（核心代码）。
+- T7：标定流程与工具已落地；真实标定板采集待现场执行（需棋盘格）。
+- T8 ✅（2026-08-18）：工具 + 集成完成（`build_srth_dataset.py` 透传 session_meta）。
 - T9：沟通文档已准备，待机器人工程师答复 PLC 四元数坐标系。
+- T10 ✅（2026-08-18）：GUI 实现 + 集成完成；**实机完整评审待桌面操作**（在 `sessions/20260817_124143` 上打 IN/OUT 保存 + 4x 快放）。
+- T11 ✅（2026-08-18）：腕部相机成像质量修复完成（AWB）。
 - 已确认（2026-08-16）：四元数顺序 wxyz；PLC 输出基座系 + 镜系**位置**两套，动作标签 delta_pos 用镜系；**PLC 无镜系四元数**（delta_rot_6d 用基座系，已上报）。
 - 暂缓：EL6688 PTP、DAgger GUI、存储格式迁移（本阶段范围外）。
 
