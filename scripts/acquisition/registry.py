@@ -114,6 +114,9 @@ def _build_process_camera(source_cfg: dict[str, Any]) -> DataSource:
         target_fps=source_cfg.get('target_fps'),
         png_compression=source_cfg.get('png_compression', 1),
         writer_threads=source_cfg.get('writer_threads', 1),
+        exposure=source_cfg.get('exposure'),
+        wb_temperature=source_cfg.get('wb_temperature'),
+        auto_wb=source_cfg.get('auto_wb'),
         arm_id=source_cfg.get('arm_id'),
     )
     return USBCameraProcessSource(config=cfg)

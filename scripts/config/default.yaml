@@ -78,6 +78,9 @@ sources:
   image_format: png
   writer_threads: 2
   warmup_s: 6.0
+  exposure: -6
+  wb_temperature: 6500
+  auto_wb: 0
   ready_timeout: 20.0
 - type: process_camera
   name: camera_arm_3
@@ -91,5 +94,8 @@ sources:
   backend: dshow
   image_format: png
   warmup_s: 6.0
+  exposure: -6
+  wb_temperature: 6500
+  auto_wb: 0
   ready_timeout: 20.0
   enabled: true

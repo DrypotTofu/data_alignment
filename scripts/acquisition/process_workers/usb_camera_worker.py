@@ -229,6 +229,18 @@ def main() -> None:
                         help='Filename that signals the worker to stop')
     parser.add_argument('--ready-file', type=str, default='.ready',
                         help='Filename written after the first frame is captured')
+    parser.add_argument('--exposure', type=float, default=None,
+                        help='Manual exposure (CAP_PROP_EXPOSURE). If None, the '
+                             'default -6 is applied (as before).')
+    parser.add_argument('--wb-temperature', type=float, default=None,
+                        help='Manual white-balance colour temperature in Kelvin '
+                             '(CAP_PROP_WB_TEMPERATURE). DSHOW cameras typically '
+                             'accept ~2800-6500K; set to the scene illuminant '
+                             '(e.g. 6500 for cool-white endoscope LED). None = '
+                             'driver default.')
+    parser.add_argument('--auto-wb', type=int, default=None,
+                        help='CAP_PROP_AUTO_WB: 1 = auto white balance, 0 = manual. '
+                             'None = leave driver default.')
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -249,7 +261,17 @@ def main() -> None:
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     # Try to disable auto exposure; some cameras will then run at a fixed frame rate.
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
-    cap.set(cv2.CAP_PROP_EXPOSURE, -6)
+    cap.set(cv2.CAP_PROP_EXPOSURE, args.exposure if args.exposure is not None else -6)
+    # T11: manual white balance. DSHOW wrist cameras lock WB_TEMPERATURE
+    # (~4600K default) which mismatches the cool-white endoscope LED, causing a
+    # blue cast; setting the temperature to the scene illuminant fixes it.
+    # NOTE: property order matters — setting CAP_PROP_AUTO_WB *after*
+    # CAP_PROP_WB_TEMPERATURE resets the temperature back to the driver default
+    # (verified on these cameras: wb->autowb0 readback=4600, autowb0->wb=6500).
+    if args.auto_wb is not None:
+        cap.set(cv2.CAP_PROP_AUTO_WB, float(args.auto_wb))
+    if args.wb_temperature is not None:
+        cap.set(cv2.CAP_PROP_WB_TEMPERATURE, args.wb_temperature)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
     # CAP_PROP_FPS and target_fps are independent: fps selects the driver's
@@ -264,6 +286,14 @@ def main() -> None:
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     logger.info('Worker opened camera %d at %dx%d (backend=%s)',
                 args.index, actual_w, actual_h, args.backend)
+    # T11: log property readbacks to verify manual params actually took effect.
+    wb_temp = cap.get(cv2.CAP_PROP_WB_TEMPERATURE)
+    exposure = cap.get(cv2.CAP_PROP_EXPOSURE)
+    auto_wb = cap.get(cv2.CAP_PROP_AUTO_WB)
+    logger.info('Manual params: WB_TEMPERATURE readback=%.0f (requested=%s), '
+                'EXPOSURE readback=%.1f, AUTO_WB readback=%s',
+                wb_temp, args.wb_temperature, exposure,
+                'n/a' if auto_wb != auto_wb else f'{auto_wb:.0f}')
 
     ready_path = out_dir / args.ready_file
     if ready_path.exists():

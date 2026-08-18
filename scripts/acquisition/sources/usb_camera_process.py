@@ -53,6 +53,10 @@ class USBCameraProcessConfig:
     # Parallel image-writer threads per camera. Use 2 for PNG at 720p+ so the
     # writer keeps up with 30 fps at compression level 1.
     writer_threads: int = 1
+    # T11: manual exposure / white balance (None = driver default, see worker).
+    exposure: float | None = None
+    wb_temperature: float | None = None
+    auto_wb: int | None = None
 
 
 class USBCameraProcessSource(DataSource):
@@ -130,6 +134,12 @@ class USBCameraProcessSource(DataSource):
             cmd += ['--duration', str(self.config.duration)]
         if self.config.warmup_s is not None:
             cmd += ['--warmup-s', str(self.config.warmup_s)]
+        if self.config.exposure is not None:
+            cmd += ['--exposure', str(self.config.exposure)]
+        if self.config.wb_temperature is not None:
+            cmd += ['--wb-temperature', str(self.config.wb_temperature)]
+        if self.config.auto_wb is not None:
+            cmd += ['--auto-wb', str(self.config.auto_wb)]
 
         logger.info('Starting worker process for %s: %s', self.name, ' '.join(cmd))
         env = os.environ.copy()
