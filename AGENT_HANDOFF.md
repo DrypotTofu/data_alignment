@@ -1,6 +1,6 @@
 # AGENT 任务交接：开始采集标注/训练数据前的就绪工作
 
-> 创建日期：2026-08-16；最近更新：2026-08-18（执行 Agent：T4 完成、T8-集成完成、T10 实现完成、T11 完成，详见下方任务状态；剩余 T5+T6 / T7-现场 / T9-跟进 / T10-实机评审）。
+> 创建日期：2026-08-16；最近更新：2026-08-18（项目管理 Agent：PM 验收 T4/T8/T10/T11 通过；新增 T12 采集框架健壮性与存储优化（里程碑后第一批执行）；剩余 T5+T6 / T7-现场 / T9-跟进 / T10-实机评审 / T12）。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -115,6 +115,31 @@
 兜底方案（仅当驱动完全不吃手动属性时启用）：标定流程中加拍一次白纸/色卡，算逐通道增益，在 `build_srth_dataset.py` 前做离线颜色校正。**已 clipping 的区域离线救不回来，优先争取采集时解决。**
 
 汇报：生效属性清单（含回读值）、调定后的参数值、验证 session 的抽帧对比图与帧间稳定性数据。若驱动不支持手动控制，停下来汇报，转入兜底方案评估。
+
+### T12. 采集框架健壮性与存储优化（PM 代码评审立项，里程碑后第一批执行；**里程碑冲刺期间不动 `scripts/acquisition/`**）
+
+来源：2026-08-18 PM 对 `scripts/acquisition/` 的框架级评审。按优先级分三档：
+
+**P1（正式规模采集前应有）：**
+
+1. **相机死亡 fail-fast**：当前 worker 读帧失败后进程空转、`_wait_for_ready` 提前退出仅 log 不报错（`usb_camera_worker.py:113`、`usb_camera_process.py`），某路相机中途挂掉时 session 表面正常、事后才发现缺数据。要求：worker 捕获失败退出非零；source 在 ready 超时/worker 早退时 raise 让 session 启动中止；运行期死亡至少在 `session.json` 记录非零退出码。
+2. **TwinCAT CSV 瘦身**：`_build_sample` 的常量元数据（ams_net_id、ip、master_offset_ns 等 ~12 个字段）目前逐行写入 CSV（`twincat.py` `TwinCATWriter.write`），300 Hz × 4 臂下体积和解析成本放大数倍。改为：常量写入 `robot_pose/meta.json` sidecar，每行只留逐样本变化字段（`pc_arrival_ns`、`rtt_ns`、`twincat_cycle_count`）。⚠️ 改 CSV schema，**必须先核对 `align_camera_anchor.py` / `analyze_gripper.py` 等下游读取的列名清单并在汇报中给出兼容性说明**。
+3. **修正过时元数据字符串**：`'orientation_order': 'wxyz (to be confirmed)'`——wxyz 已于 2026-08-16 确认，改为确定表述或删除该字段。
+
+**P2（顺手清理）：**
+
+4. 删除 worker 启动命令中重复的 `'--topic'` 传参（`usb_camera_process.py:111` 与 `:118`）。
+5. legacy 源从 `registry.py` 的活注册中移除（或加 deprecation warning），同步删除 `config.py` 的 `usb_multi_camera` 校验分支——与「legacy 只读」约定对齐。
+6. 分层泄漏收口：`run_acquisition.py:55-79` 访问 `session._sources`、`session.run_main_thread_sources()` 戳 `source._started_at_ns/_stop_event`、`usb_camera_process.py` 用 `getattr(self,'_session_dir')`。补公共 API（如 `session.main_thread_sources`、`source.attach_session(dir)`）。
+7. 删除 `capture_loop` 未使用的 `fps` 参数（`usb_camera_worker.py:84`）；`_TwinCATCsvWriter` 的 `import csv` 移到模块顶部（`twincat.py:559`）；TwinCAT CSV 与相机 metadata.csv 统一 `utf-8-sig` 编码。
+
+**P3（文档/注释同步，改代码时一并做）：**
+
+8. `session.py:11-14` 模块 docstring 的目录布局更新为实际的 `camera_arm_N` + `robot_pose/robot_pose_armN`；`USBCameraProcessConfig` 与 worker `--png-compression` 的过时注释改为当前生产结论（T3 实测：PNG L1 + writer_threads=6 达标 720p30）。
+
+**可观测性增强（可选，推荐）**：worker 周期性输出采集统计（fps、队列深度、累计丢帧数），或写计数文件，使长录期间的丢帧实时可见（T3/T4 调试时丢帧只能事后从 stdout 回放确认）。
+
+验收：P1 三项完成 + 全链路回归（30 s 采集 → `verify_alignment.py` → `align_camera_anchor.py` → `build_srth_dataset.py` 跑通）；汇报各项改动点、下游兼容性核对清单、回归指标。
 
 ### 里程碑达成后立即排期（非阻塞，先立项不实施）
 

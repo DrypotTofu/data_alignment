@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 
 title VLGP 手动数据采集
 
-set PYTHON=C:\Users\11764\.conda\envs\SurgDataColl\python.exe
+set PYTHON=D:\miniconda3\envs\SurgDataColl\python.exe
 set PROJECT_ROOT=D:\AI4Surg\DataCollection\data_alignment
 set SCRIPT=%PROJECT_ROOT%\scripts\tools\manual_acquisition.py
 set CONFIG=%PROJECT_ROOT%\scripts\config\default.yaml
@@ -33,4 +33,4 @@ if %EXIT_CODE% neq 0 (
 )
 echo.
 echo 按任意键关闭窗口...
-pause >/dev/null
+pause >nul

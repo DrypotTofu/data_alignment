@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 
 title VLGP 单摄像头实时预览
 
-set PYTHON=C:\Users\11764\.conda\envs\SurgDataColl\python.exe
+set PYTHON=D:\miniconda3\envs\SurgDataColl\python.exe
 set PROJECT_ROOT=D:\AI4Surg\DataCollection\data_alignment
 set SCRIPT=%PROJECT_ROOT%\scripts\tools\preview_single_camera.py
 set LOG=%PROJECT_ROOT%\scripts\tools\preview_single_camera.log
