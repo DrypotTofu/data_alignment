@@ -57,6 +57,9 @@ class USBCameraProcessConfig:
     exposure: float | None = None
     wb_temperature: float | None = None
     auto_wb: int | None = None
+    brightness: float | None = None
+    contrast: float | None = None
+    saturation: float | None = None
 
 
 class USBCameraProcessSource(DataSource):
@@ -140,6 +143,12 @@ class USBCameraProcessSource(DataSource):
             cmd += ['--wb-temperature', str(self.config.wb_temperature)]
         if self.config.auto_wb is not None:
             cmd += ['--auto-wb', str(self.config.auto_wb)]
+        if self.config.brightness is not None:
+            cmd += ['--brightness', str(self.config.brightness)]
+        if self.config.contrast is not None:
+            cmd += ['--contrast', str(self.config.contrast)]
+        if self.config.saturation is not None:
+            cmd += ['--saturation', str(self.config.saturation)]
 
         logger.info('Starting worker process for %s: %s', self.name, ' '.join(cmd))
         env = os.environ.copy()

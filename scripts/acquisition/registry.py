@@ -117,6 +117,9 @@ def _build_process_camera(source_cfg: dict[str, Any]) -> DataSource:
         exposure=source_cfg.get('exposure'),
         wb_temperature=source_cfg.get('wb_temperature'),
         auto_wb=source_cfg.get('auto_wb'),
+        brightness=source_cfg.get('brightness'),
+        contrast=source_cfg.get('contrast'),
+        saturation=source_cfg.get('saturation'),
         arm_id=source_cfg.get('arm_id'),
     )
     return USBCameraProcessSource(config=cfg)

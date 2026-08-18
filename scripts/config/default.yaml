@@ -79,8 +79,11 @@ sources:
   writer_threads: 2
   warmup_s: 6.0
   exposure: -6
-  wb_temperature: 6500
+  wb_temperature: 5000
   auto_wb: 0
+  brightness: 36
+  contrast: 5
+  saturation: 64
   ready_timeout: 20.0
 - type: process_camera
   name: camera_arm_3
@@ -95,7 +98,10 @@ sources:
   image_format: png
   warmup_s: 6.0
   exposure: -6
-  wb_temperature: 6500
+  wb_temperature: 4500
   auto_wb: 0
+  brightness: 36
+  contrast: 5
+  saturation: 64
   ready_timeout: 20.0
   enabled: true

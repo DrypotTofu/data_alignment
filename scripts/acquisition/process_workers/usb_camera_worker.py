@@ -241,6 +241,13 @@ def main() -> None:
     parser.add_argument('--auto-wb', type=int, default=None,
                         help='CAP_PROP_AUTO_WB: 1 = auto white balance, 0 = manual. '
                              'None = leave driver default.')
+    parser.add_argument('--brightness', type=float, default=None,
+                        help='Manual brightness (CAP_PROP_BRIGHTNESS, DSHOW range '
+                             '-64..64). None = driver default.')
+    parser.add_argument('--contrast', type=float, default=None,
+                        help='Manual contrast (CAP_PROP_CONTRAST). None = driver default.')
+    parser.add_argument('--saturation', type=float, default=None,
+                        help='Manual saturation (CAP_PROP_SATURATION). None = driver default.')
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -272,6 +279,13 @@ def main() -> None:
         cap.set(cv2.CAP_PROP_AUTO_WB, float(args.auto_wb))
     if args.wb_temperature is not None:
         cap.set(cv2.CAP_PROP_WB_TEMPERATURE, args.wb_temperature)
+    # T11: manual picture controls (brightness/contrast/saturation), optional.
+    if args.brightness is not None:
+        cap.set(cv2.CAP_PROP_BRIGHTNESS, args.brightness)
+    if args.contrast is not None:
+        cap.set(cv2.CAP_PROP_CONTRAST, args.contrast)
+    if args.saturation is not None:
+        cap.set(cv2.CAP_PROP_SATURATION, args.saturation)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
     # CAP_PROP_FPS and target_fps are independent: fps selects the driver's
@@ -290,10 +304,17 @@ def main() -> None:
     wb_temp = cap.get(cv2.CAP_PROP_WB_TEMPERATURE)
     exposure = cap.get(cv2.CAP_PROP_EXPOSURE)
     auto_wb = cap.get(cv2.CAP_PROP_AUTO_WB)
+    brightness = cap.get(cv2.CAP_PROP_BRIGHTNESS)
+    contrast = cap.get(cv2.CAP_PROP_CONTRAST)
+    saturation = cap.get(cv2.CAP_PROP_SATURATION)
     logger.info('Manual params: WB_TEMPERATURE readback=%.0f (requested=%s), '
-                'EXPOSURE readback=%.1f, AUTO_WB readback=%s',
+                'EXPOSURE readback=%.1f, AUTO_WB readback=%s, '
+                'BRIGHTNESS readback=%s, CONTRAST readback=%s, SATURATION readback=%s',
                 wb_temp, args.wb_temperature, exposure,
-                'n/a' if auto_wb != auto_wb else f'{auto_wb:.0f}')
+                'n/a' if auto_wb != auto_wb else f'{auto_wb:.0f}',
+                'n/a' if brightness != brightness else f'{brightness:.0f}',
+                'n/a' if contrast != contrast else f'{contrast:.0f}',
+                'n/a' if saturation != saturation else f'{saturation:.0f}')
 
     ready_path = out_dir / args.ready_file
     if ready_path.exists():
