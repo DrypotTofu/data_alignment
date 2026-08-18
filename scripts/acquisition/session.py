@@ -156,16 +156,35 @@ class AcquisitionSession:
 
         # Start background sources. Process-based camera workers block in
         # start() until their warm-up (auto white balance convergence) is done
-        # and they signal ready, so start them FIRST: TwinCAT and the cameras
-        # then begin recording at (nearly) the same time instead of TwinCAT
-        # running ahead during the camera warm-up.
+        # and they signal ready. Two rules avoid the long serial start-up seen
+        # in manual mode (T12-fix 2026-08-18):
+        #   1. Fast sources (TwinCAT etc.) start FIRST so robot data is recorded
+        #      for the whole session, not only after every camera warmed up.
+        #   2. Camera sources are started in PARALLEL (one thread each) instead
+        #      of serially, so N cameras cost max(warmup) instead of N*warmup.
         from .sources.usb_camera_process import USBCameraProcessSource
 
         def _startup_key(source):
-            return 0 if isinstance(source, USBCameraProcessSource) else 1
+            # TwinCAT / non-camera sources first (0), cameras last (1).
+            return 1 if isinstance(source, USBCameraProcessSource) else 0
 
-        for source in sorted(background_sources.values(), key=_startup_key):
+        fast_sources = [s for s in sorted(background_sources.values(), key=_startup_key)
+                        if _startup_key(s) == 0]
+        camera_sources = [s for s in sorted(background_sources.values(), key=_startup_key)
+                          if _startup_key(s) == 1]
+
+        for source in fast_sources:
             source.start()
+
+        if camera_sources:
+            threads = [
+                threading.Thread(target=source.start, name=f'start-{source.name}', daemon=True)
+                for source in camera_sources
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
 
         main_thread_count = len(self._main_thread_sources)
         background_count = len(background_sources)
@@ -206,7 +225,6 @@ class AcquisitionSession:
             return
 
         logger.info('Stopping session %s...', self.session_name)
-        self._stop_event.set()
 
         # Signal main-thread sources. Their acquisition loop checks the stop
         # event between frames. We do not join them here because they run in
@@ -215,11 +233,17 @@ class AcquisitionSession:
             if source.is_running:
                 logger.info('Signaling main-thread source %s to stop', source.name)
 
-        # Stop background sources first so the queue stops growing and all
-        # in-flight samples are enqueued before the writer is told to exit.
+        # Stop background sources FIRST so all in-flight samples are enqueued
+        # before the writer is told to exit. Setting _stop_event before this
+        # let the writer loop exit while the queue was momentarily empty,
+        # orphaning late samples (e.g. a TwinCAT source that started late after
+        # camera warm-up) — reproduced as zero robot_pose CSV (fix 2026-08-18).
         for source in self._sources.values():
             if not source.runs_in_main_thread:
                 source.stop(timeout=timeout / 2)
+
+        # Now tell the writer to drain and exit.
+        self._stop_event.set()
 
         # Wait for writer to drain. With high-resolution cameras PNG writing
         # can be slow, so give it most of the timeout budget.

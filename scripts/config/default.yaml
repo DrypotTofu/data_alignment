@@ -77,7 +77,6 @@ sources:
   backend: dshow
   image_format: png
   writer_threads: 2
-  warmup_s: 6.0
   exposure: -6
   wb_temperature: 5000
   auto_wb: 1
@@ -96,7 +95,6 @@ sources:
   fourcc: MJPG
   backend: dshow
   image_format: png
-  warmup_s: 6.0
   exposure: -6
   wb_temperature: 4300
   auto_wb: 1
