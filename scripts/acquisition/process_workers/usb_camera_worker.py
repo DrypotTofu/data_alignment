@@ -277,7 +277,11 @@ def main() -> None:
     # (verified on these cameras: wb->autowb0 readback=4600, autowb0->wb=6500).
     if args.auto_wb is not None:
         cap.set(cv2.CAP_PROP_AUTO_WB, float(args.auto_wb))
-    if args.wb_temperature is not None:
+    # Manual temperature and AUTO_WB are mutually exclusive on these DSHOW
+    # cameras: setting WB_TEMPERATURE after AUTO_WB=1 switches the driver back
+    # to manual (AUTO_WB readback becomes 0). Only apply the temperature when
+    # auto WB is off (or unspecified).
+    if args.wb_temperature is not None and args.auto_wb != 1:
         cap.set(cv2.CAP_PROP_WB_TEMPERATURE, args.wb_temperature)
     # T11: manual picture controls (brightness/contrast/saturation), optional.
     if args.brightness is not None:

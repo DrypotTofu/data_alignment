@@ -80,7 +80,7 @@ sources:
   warmup_s: 6.0
   exposure: -6
   wb_temperature: 5000
-  auto_wb: 0
+  auto_wb: 1
   brightness: 36
   contrast: 5
   saturation: 64
@@ -99,7 +99,7 @@ sources:
   warmup_s: 6.0
   exposure: -6
   wb_temperature: 4300
-  auto_wb: 0
+  auto_wb: 1
   brightness: 36
   contrast: 5
   saturation: 64
