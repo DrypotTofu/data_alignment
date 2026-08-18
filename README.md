@@ -27,6 +27,34 @@ python scripts/run_acquisition.py --config scripts/config/default.yaml --duratio
 python scripts/tools/align_camera_anchor.py --session sessions/<session_name>
 ```
 
+## 采集后的数据处理流程
+
+每条 session 采集完成后按以下顺序处理（详细规范见 `tech_repo/VLGP_标定与元数据规范_20260817.md` 第 6 节）：
+
+```bash
+# 1. 当场补录元数据（任务指令/任务类型/操作者/标定 ID，不可回溯，先做）
+python scripts/tools/write_session_meta.py --session sessions/<session_name>
+
+# 2. 对齐预检（漂移与同步质量检查；异常就停下来排查）
+python scripts/tools/verify_alignment.py --session sessions/<session_name>
+
+# 3. 生成 30 Hz 相机锚点对齐表（关注对齐误差 p99 < 15 ms、覆盖率）
+python scripts/tools/align_camera_anchor.py --session sessions/<session_name>
+
+# 4. 人工裁剪与审核（GUI：运动量曲线定位首尾静止段，[/] 打 IN/OUT，
+#    1/2/3 标 approved/rejected/pending，S 保存；决策写入 annotations.json，
+#    原始数据不动。无对齐表的废品 session 会进入降级视图，只能标 rejected/pending）
+python scripts/tools/review_session.py --session sessions/<session_name>
+
+# 5. 构建 SRT-H 训练 episode（自动应用 trim、带入 session 元数据；
+#    核对样本数与动作数值范围）
+python scripts/tools/build_srth_dataset.py --session sessions/<session_name>
+
+# 6. 目检视频（逐路检查画面连续性、色彩、时间戳叠加）
+python scripts/tools/images_to_video.py --dir sessions/<session_name>/camera_arm_2 \
+    --output sessions/<session_name>/arm2_preview.mp4 --timestamp-overlay
+```
+
 ## 目录结构
 
 ```text
