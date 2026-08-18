@@ -386,6 +386,18 @@ def main() -> int:
         })
     hl = pd.DataFrame(hl_rows)
 
+    # ---- load session metadata (T8: write_session_meta.py sidecar) ------
+    session_meta = {}
+    session_meta_path = session_dir / 'session_meta.json'
+    if session_meta_path.exists():
+        session_meta = json.loads(session_meta_path.read_text(encoding='utf-8'))
+        print('\n=== session metadata (from session_meta.json) ===')
+        for k, v in session_meta.items():
+            print(f'  {k}: {v}')
+    else:
+        print('\n  (no session_meta.json — language fields stay placeholder; '
+              'run scripts/tools/write_session_meta.py at collection time)')
+
     # ---- image registration --------------------------------------------
     out_dir = (args.out or session_dir / 'srth_episode').resolve()
     if out_dir.exists():
@@ -421,12 +433,22 @@ def main() -> int:
     mask_df = actions[['anchor_timestamp_ns_plc'] + [f'arm{a}_active' for a in ARMS]].copy()
     mask_df.to_parquet(out_dir / 'arm_active_mask.parquet', index=False, compression='zstd')
 
-    (out_dir / 'language.json').write_text(json.dumps({
-        'task_instruction': '',
+    language = {
+        'task_instruction': session_meta.get('task_instruction', ''),
         'corrective_instruction': '',
         'correction_flag': False,
-        'note': 'placeholder — filled by the annotation step (task demos)',
-    }, ensure_ascii=False, indent=2), encoding='utf-8')
+        'note': ('from session_meta.json (task recorded at collection time)'
+                 if session_meta
+                 else 'placeholder — filled by the annotation step (task demos)'),
+    }
+    # T8: pass through the task-relevant session metadata fields so the
+    # episode's language/meta carry the operator-recorded task info.
+    for key in ('task_type', 'subtask_sequence', 'operator', 'organ_model',
+                'instruments', 'camera_calibration', 'notes'):
+        if key in session_meta:
+            language[key] = session_meta[key]
+    (out_dir / 'language.json').write_text(json.dumps(
+        language, ensure_ascii=False, indent=2), encoding='utf-8')
 
     # ---- meta.json ------------------------------------------------------
     cam_err = {}
@@ -507,6 +529,8 @@ def main() -> int:
         'obs': {'streams': {s: {'frames': len(f)} for s, f in kept_files.items()},
                 'images_copied': not args.no_copy,
                 'manifest': manifest},
+        'session_meta': (session_meta if session_meta
+                         else {'note': 'session_meta.json absent at build time'}),
         'self_tests': self_tests,
     }
     (out_dir / 'meta.json').write_text(
