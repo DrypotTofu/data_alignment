@@ -98,7 +98,7 @@ sources:
   image_format: png
   warmup_s: 6.0
   exposure: -6
-  wb_temperature: 4500
+  wb_temperature: 4300
   auto_wb: 0
   brightness: 36
   contrast: 5
