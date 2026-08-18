@@ -433,6 +433,22 @@ def collect_sessions(root: Path) -> list[Path]:
     return out
 
 
+def _resolve_session(path: Path) -> Path:
+    """Resolve a session dir from any working directory.
+
+    Tries (in order): as-given, <repo>/<path>, <cwd>/<path>. Returns the first
+    existing directory; falls back to the absolute as-given path.
+    """
+    candidates = [Path(path)]
+    if not path.is_absolute():
+        candidates.append(REPO_ROOT / path)
+        candidates.append(Path.cwd() / path)
+    for cand in candidates:
+        if cand.is_dir():
+            return cand.resolve()
+    return Path(path).resolve()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Session review / trim GUI (T10 v1)')
     parser.add_argument('--session', type=Path, default=None, help='Single session dir')
@@ -442,10 +458,13 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     if args.session:
-        w = ReviewWindow(args.session)
+        w = ReviewWindow(_resolve_session(args.session))
         w.show()
     elif args.sessions:
-        root = args.sessions.resolve()
+        root = args.sessions
+        if not root.is_absolute():
+            root = REPO_ROOT / root
+        root = root.resolve()
         sessions = collect_sessions(root)
         if not sessions:
             print(f'No sessions with alignment found under {root}')
