@@ -318,6 +318,8 @@ def main() -> int:
     # ---- load + filter --------------------------------------------------
     align = pd.read_csv(align_path)
     align = align.sort_values('anchor_timestamp_ns_plc').reset_index(drop=True)
+    # Keep the original alignment-CSV row index for T10 trim mapping.
+    align['_src_row'] = align.index
     total_rows = len(align)
     with_pose = align[align['pose_valid']].copy()
     with_all_cams = with_pose[with_pose['all_cameras_valid']].copy()
@@ -328,6 +330,26 @@ def main() -> int:
         mask_err &= with_all_cams[c].fillna(1e9) < args.error_threshold_ms
     grid = with_all_cams[mask_err].reset_index(drop=True)
     filtered_frac = 1.0 - len(grid) / max(total_rows, 1)
+
+    # ---- annotations.json (T10): reject / trim --------------------------
+    # Trim rows are alignment-CSV row indices (0-based, sorted PLC axis);
+    # `_src_row` carries the original alignment row through all filters.
+    annotations = None
+    ann_path = session_dir / 'annotations.json'
+    if ann_path.exists():
+        annotations = json.loads(ann_path.read_text(encoding='utf-8'))
+        print(f'\n=== annotations.json (T10) ===')
+        print(f'  status: {annotations.get("status")}')
+        if annotations.get('status') == 'rejected':
+            print(f'  >>> session REJECTED in review — skipping episode build.')
+            print(f'  >>> reason: {annotations.get("reject_reason", "")}')
+            return 0
+        trim = annotations.get('trim')
+        if trim:
+            s0, s1 = int(trim['start_row']), int(trim['end_row'])
+            keep = (grid['_src_row'] >= s0) & (grid['_src_row'] <= s1)
+            grid = grid[keep].reset_index(drop=True)
+            print(f'  trim rows [{s0}, {s1}] -> kept {len(grid)} of {total_rows}')
 
     print(f'\n=== filter summary ===')
     print(f'  alignment rows (anchor frames):        {total_rows}')
@@ -504,6 +526,8 @@ def main() -> int:
                 1.0 - len(grid) / max(len(with_all_cams), 1)),
             'error_threshold_ms': args.error_threshold_ms,
         },
+        'annotations': (annotations if annotations
+                        else {'note': 'annotations.json absent at build time'}),
         'alignment_errors_ms': cam_err,
         'coordinate_notes': {
             'delta_pos_frame': 'scope frame (scope_position_*), mm',
