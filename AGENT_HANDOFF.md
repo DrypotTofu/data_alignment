@@ -1,6 +1,6 @@
 # AGENT 任务交接：开始采集标注/训练数据前的就绪工作
 
-> 创建日期：2026-08-16；最近更新：2026-08-17（项目管理 Agent：同步当日执行结果——T0/T3 完成，T7/T8/T9 工具落地，剩余 T4 → T5+T6 合并验收）。
+> 创建日期：2026-08-16；最近更新：2026-08-18（项目管理 Agent：新增 T10 数据清洗/裁剪 GUI；修正 conda 环境路径；已完成任务保持归档，无需执行 Agent 再处理）。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -15,9 +15,10 @@
 3. `tech_repo/VLGP_标定与元数据规范_20260817.md`：**T7/T8 规范与操作者流程（第 6 节一页流程是正式采集的操作依据）**。
 4. `tech_repo/VLGP_TwinCAT_ADS链路修复说明_20260817.md`：T0 修复记录（ADS 路由、符号清单）。
 5. `tech_repo/VLGP_项目状态与技术备忘_20260803.md`：详细技术背景（13.3/13.5 节 SRT-H 数据构建方案、第 11 节标注规划）。
-6. `scripts/AGENTS.md`：开发约定。
+6. `tech_repo/VLGP_数据清洗与标注工具设计_20260818.md`：**T10 设计规范（做 T10 前必读）**。
+7. `scripts/AGENTS.md`：开发约定。
 
-环境：conda 环境 `SurgDataColl`（`C:\Users\11764\.conda\envs\SurgDataColl\python.exe`），Windows + PowerShell。
+环境：conda 环境 `SurgDataColl`（**重装系统后路径已变为 `D:\miniconda3\envs\SurgDataColl\python.exe`**），Windows + PowerShell。PyQt5 已于 2026-08-18 装入该环境并写入 `environment.yml` / `scripts/requirements.txt`。
 
 ## 2. 里程碑验收标准（Definition of Done）
 
@@ -31,7 +32,7 @@
 
 ## 3. 任务清单
 
-### 已完成（归档，供查阅）
+### 已完成（归档，供查阅；**无需执行 Agent 进一步处理**）
 
 - **T1 ✅（2026-08-16）**：gripper_angle 量程与方向反推。全局量程约 [-55, +85]；`gripper_signal` 恒 0，张开方向离线不可证，暂约定「角度增大 = 张开」待 T5 实测确认。工具 `scripts/tools/analyze_gripper.py`。
 - **T2 ✅（2026-08-16）**：`scripts/tools/build_srth_dataset.py` 实现 + 离线验证（`test_binding_alignment_20260814_170005`）。单元自检 6/6 PASS；646 个 60 步 chunk 样本（40 维）；静止 session delta_pos ~0.05 mm 量级正确。
@@ -78,6 +79,18 @@
 
 - 将 `tech_repo/T9_PLC四元数坐标系确认_20260817.md` 发给机器人工程师，回收 Q1–Q4 答复。
 - 若 Q1 = A（本就镜系）→ 遗留风险解除；若 Q1 = B 且不改 PLC → 按文档第 3 节安排固定旋转标定（并入 T7 的 hand_eye/ 预留目录）。
+
+### T10. 数据清洗/裁剪 GUI（v1，新立项，设计已就绪）
+
+解决采集数据开头/结尾无关片段的人工裁剪，并为后续人工标注铺路。**严格按 `tech_repo/VLGP_数据清洗与标注工具设计_20260818.md` 实施**，要点：
+
+- 实现 `scripts/tools/review_session.py`（PyQt5 单文件）：三路同步视图 + 运动量曲线点击跳转 + IN/OUT 裁剪 + approved/rejected 状态 + 批量队列模式。
+- 非破坏式：人工决策只写 `<session>/annotations.json`（schema 见设计文档 2.1 节），原始数据不动。
+- 改造 `build_srth_dataset.py`：自动检测 annotations.json，按 trim 过滤网格行、跳过 rejected session、trim 信息记入 episode `meta.json`。
+- v1 不做段标注编辑 UI（`segments` 仅保留结构）、不做视频转码。
+- 验收：设计文档第 5 节（在 `sessions/20260817_124143` 上完整评审一遍 + episode 行数核对 + 4x 快放流畅）。
+
+汇报：工具截图或录屏说明、验收结果、annotations.json 实例。
 
 ### 里程碑达成后立即排期（非阻塞，先立项不实施）
 

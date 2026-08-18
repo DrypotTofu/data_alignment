@@ -17,3 +17,4 @@ dependencies:
       - pyyaml>=6.0
       - pyads>=3.6.0
       - pyarrow>=15.0.0
+      - pyqt5>=5.15.0

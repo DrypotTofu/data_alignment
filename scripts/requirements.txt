@@ -8,4 +8,5 @@ matplotlib>=3.8.0
 pyyaml>=6.0
 pyads>=3.6.0
 pyarrow>=15.0.0
+pyqt5>=5.15.0
 # ffmpeg is also required (pack_session.py): conda install -c conda-forge ffmpeg

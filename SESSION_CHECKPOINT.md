@@ -25,17 +25,18 @@
 10. **T0 硬件阻塞解除（2026-08-17）**：采集机重装 Windows 后 TwinCAT/ADS 链路修复完成。本机 `TcSysSrv` 恢复运行；本机 `StaticRoutes.xml` 重建指向 192.168.22.22 的静态路由；机器人侧新增 `CollectionPC` 路由（本机 NetID `192.10.100.251.1.1` → `192.168.22.100`）。确认机器人 NetID 仍为 `169.254.226.99.1.1`（`default.yaml` 无需改动），PLC 已 Run（RTIME 4132 随重装解决）；8 类符号全部读通，全符号轮询 290.7 Hz、0 错误。详见 `tech_repo/VLGP_TwinCAT_ADS链路修复说明_20260817.md`。
 11. **T3 长稳测试通过（2026-08-17）**：session `sessions/20260817_124143`（10 min）。修复了两处前置问题：① **720p PNG 写盘瓶颈**——arm_2 重装后仅 ~16 fps，`writer_threads` 2→6（arm_2）、1→2（arm_1）后三路均 ≥29.99 fps（PNG L1 无损，~37 GB/30min）；② **align_camera_anchor.py 性能**——预计算重构后 18k×190k 秒级完成。实测：arm_1 30.001 / arm_2 29.990 / arm_3 30.002 fps；TwinCAT 316.8 Hz；漂移残差 std 0.286 ms；对齐覆盖率（机器人区间）100%；无掉线/堆积/异常。相机绑定修正为 arm_1=1、arm_2=0、arm_3=3（用户确认）；index 0 实测原生 720p@50 fps，原「29.7 fps 房景相机」结论已失效。
 12. **T7/T8/T9 落地（2026-08-17）**：新增 `scripts/tools/collect_calibration.py`（标定板采集+内参计算，示例记录 `calibrations/calib_example_synthetic/`）、`scripts/tools/write_session_meta.py`（session 元数据工具）；规范文档 `tech_repo/VLGP_标定与元数据规范_20260817.md`、沟通文档 `tech_repo/T9_PLC四元数坐标系确认_20260817.md`。
+13. **T8-集成完成（2026-08-18）**：`build_srth_dataset.py` 自动读取 `<session>/session_meta.json`，将 `task_instruction`/`task_type`/`organ_model`/`instruments`/`camera_calibration` 等透传进 episode `language.json` 与 `meta.json`；在 `sessions/20260817_124143` 填入示例 `session_meta.json` 重建 episode 验证 ✅（episode `sessions/20260817_124143/srth_episode`）。
+14. **T4 三路 30 Hz 全量验证通过（2026-08-18）**：session `sessions/20260818_080808`（30 s）——arm_1 30.028 / arm_2 30.011 / arm_3 30.026 fps（≥29.9 ✅）；对齐误差 mean ~0.9 ms；机器人有效区间内覆盖率 100%。两处待 PM 决策/知悉：① arm_2 帧间隔 std 10.6 ms 超 6 ms 验收线（720p PNG L1 写盘抖动，PNG0/JPG 可降但存储 150 GB/30min）；② 30 s session 全局覆盖率 77.5% 系相机 pre-roll（~8.5 s 启动开销）所致，10 min 为 98.5%，数据集构建已按 pose_valid 过滤不受影响。
 
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。
 - T2 ✅（2026-08-16）：`build_srth_dataset.py` 实现 + 离线验证通过；待真实任务 demo 验证动作数值与 mask 约定。
 - T3 ✅（2026-08-17）：10 分钟长稳测试通过（session `20260817_124143`）；30 min 版本可随 T6 一并复验。
-- T4：三路 30 Hz 全量验证（**硬件已就绪**：TwinCAT 已通、三路相机 30 fps、绑定 arm_1=1/arm_2=0/arm_3=3；直接执行 `camera_assignment_setup` 确认 → 30 s session → `align_camera_anchor.py` 覆盖率验收）。
-- T5：镜坐标系轴向 sanity check（可与 T6 合并；同时实测 gripper 张开方向）。
-- T6：端到端试跑一条演示 episode（里程碑验收）。
+- T4 ✅（2026-08-18）：三路 30 Hz 全量验证通过（session `20260818_080808`）；arm_2 帧间隔 std 超标待 PM 决策。
+- T5+T6：端到端试跑（**需机器人可动**：已知方向平移 → gripper 开合实测 → 触针/抓针演示 + 30 min 长稳复验；里程碑验收）。
 - T7：标定流程与工具已落地；真实标定板采集待现场执行。
-- T8：元数据模板与工具已落地；框架写入集成待 PM 确认。
+- T8 ✅（2026-08-18）：工具 + 集成完成（`build_srth_dataset.py` 透传 session_meta）；session.json 加 camera_calibration 字段仍暂缓（核心代码）。
 - T9：沟通文档已准备，待机器人工程师答复 PLC 四元数坐标系。
 - 已确认（2026-08-16）：四元数顺序 wxyz；PLC 输出基座系 + 镜系**位置**两套，动作标签 delta_pos 用镜系；**PLC 无镜系四元数**（delta_rot_6d 用基座系，已上报）。
 - 暂缓：EL6688 PTP、DAgger GUI、存储格式迁移（本阶段范围外）。
