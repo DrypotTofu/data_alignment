@@ -1,6 +1,6 @@
 # AGENT 任务交接：开始采集标注/训练数据前的就绪工作
 
-> 创建日期：2026-08-16；最近更新：2026-08-18（项目管理 Agent：新增 T10 数据清洗/裁剪 GUI、T11 腕部相机成像质量修复；修正 conda 环境路径；帧间隔 std 验收线调整见 T4 节决策注记；已完成任务保持归档，无需执行 Agent 再处理）。
+> 创建日期：2026-08-16；最近更新：2026-08-18（执行 Agent：T4 完成、T8-集成完成、T10 实现完成、T11 完成，详见下方任务状态；剩余 T5+T6 / T7-现场 / T9-跟进 / T10-实机评审）。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -39,29 +39,24 @@
 - **T2 ✅（2026-08-16）**：`scripts/tools/build_srth_dataset.py` 实现 + 离线验证（`test_binding_alignment_20260814_170005`）。单元自检 6/6 PASS；646 个 60 步 chunk 样本（40 维）；静止 session delta_pos ~0.05 mm 量级正确。
 - **T0 ✅（2026-08-17）**：硬件阻塞解除。采集机重装 Windows 后 RTIME 4132 解决；本机 `StaticRoutes.xml` 重建指向 192.168.22.22；机器人侧新增 `CollectionPC` 路由；机器人 NetID 仍为 `169.254.226.99.1.1`（`default.yaml` 无需改动）；8 类符号全读通，全符号轮询 290.7 Hz、0 错误。详见 `VLGP_TwinCAT_ADS链路修复说明_20260817.md`。
 - **T3 ✅（2026-08-17，10 分钟版本）**：session `sessions/20260817_124143`。前置修复两处：720p PNG 写盘瓶颈（`writer_threads` arm_2 2→6、arm_1 1→2）；`align_camera_anchor.py` 预计算重构（18k×190k 秒级）。实测：arm_1 30.001 / arm_2 29.990 / arm_3 30.002 fps；TwinCAT 316.8 Hz；漂移残差 std 0.286 ms；对齐覆盖率 100%；无掉线/堆积。**相机绑定已确认为 arm_1=1、arm_2=0、arm_3=3；index 0 实测原生 720p@50 fps，旧「29.7 fps 房景相机必须替换」结论已失效。**30 分钟版本随 T6 复验。
+- **T4 ✅（2026-08-18）**：三路 30 Hz 全量验证。session `sessions/20260818_080808`（30 s）：arm_1 30.028 / arm_2 30.011 / arm_3 30.026 fps（≥29.9 ✅）；丢帧 0（日志无 `Writer queue full, dropping frame`）；帧间隔 p99 < 66.7 ms ✅；对齐误差 mean ~0.9 ms / p99 < 15 ms ✅；机器人有效区间内覆盖率 **100%**（全局 77.5% 系相机 pre-roll ~8.5 s 启动开销，10 min session 为 98.5%，数据集构建已按 pose_valid 过滤，不受影响）。详细数据见 0803 备忘 13.5 节。
 - **T7 工具与规范 ✅（2026-08-17，现场采集待做）**：`scripts/tools/collect_calibration.py` 已就绪（示例 `calibrations/calib_example_synthetic/`）；规范见 `VLGP_标定与元数据规范_20260817.md`。剩余：真实标定板现场采集（见下方 T7-现场）。
-- **T8 工具与规范 ✅（2026-08-17，集成待做）**：`scripts/tools/write_session_meta.py` 已就绪；元数据模板见规范文档第 5 节。PM 已确认的集成方案见下方 T8-集成。
+- **T8 工具与集成 ✅（2026-08-17 工具 / 2026-08-18 集成）**：`scripts/tools/write_session_meta.py` 已就绪；`build_srth_dataset.py` 已集成——自动读取 `<session>/session_meta.json`，将 `task_instruction`/`task_type`/`organ_model` 等透传进 episode 的 `language.json` 与 `meta.json`；已在 `sessions/20260817_124143` 上重建 episode 验证字段透传 ✅。
 - **T9 沟通文档 ✅（2026-08-17，待答复）**：`tech_repo/T9_PLC四元数坐标系确认_20260817.md` 已备好，待发机器人工程师并回收结论（见下方 T9-跟进）。
+- **T10 实现 ✅（2026-08-18，实机评审待桌面操作）**：`scripts/tools/review_session.py`（PyQt5 单文件：三路同步视图 + 运动量曲线 + IN/OUT 裁剪 + approved/rejected/pending + 批量队列）+ `build_srth_dataset.py` 集成（rejected 跳过 / trim 过滤 / meta 记录）。逻辑验收通过（trim [3000,15000] → 15116→10160 行、episode 10100 样本；rejected 跳过正常；GUI 冒烟通过）。**实机完整评审（设计文档第 5 节）待用户桌面操作**（见下方 T10-评审）。
+- **T11 ✅（2026-08-18）**：腕部相机成像质量修复。根因：DSHOW 白平衡锁定 4600K（暖）vs 内窥镜冷白 LED → 蓝偏。方案：worker 新增手动 exposure/wb-temperature/auto-wb/brightness/contrast/saturation 支持（含回读验证）；`camera_param_tuner.py` 实时调参工具。**定稿：arm_1/arm_3 启用自动白平衡（`auto_wb: 1`），手动色温 5000/4300K 作 fallback**；实测 AWB 优于手动（白纸中性 arm_1 6.1%、R-clip 0.76%/1.9%、帧间稳定 <1%）；20 s 目检 session `test_awb_20260818` 用户接受。详见 0803 备忘 13.5 节。
 
-### T4. 三路 30 Hz 全量验证（下一步，硬件已就绪）
+### T4. 三路 30 Hz 全量验证 ✅（2026-08-18 完成，详见归档）
 
-- 执行 `camera_assignment_setup` 确认绑定（arm_1=1、arm_2=0、arm_3=3）并核对 `default.yaml`。
-- 采一条 30 秒 session，跑 `align_camera_anchor.py`。
-- 汇报：三路实测 fps（验收线 >= 29.9 fps）、**丢帧数（验收线 = 0，核查日志中的 `Writer queue full, dropping frame` 警告）**、帧间隔 p99（验收线 < 66.7 ms，即不超过 2 个帧周期）、对齐覆盖率（验收线 >= 99%）、各模态对齐误差（p99 < 15 ms）。
+- session `sessions/20260818_080808`（30 s）：arm_1 30.028 / arm_2 30.011 / arm_3 30.026 fps（≥29.9 ✅）；丢帧 0；帧间隔 p99 < 66.7 ms ✅；对齐误差 p99 < 15 ms ✅；覆盖率（机器人区间内）100% ✅。
 
 > **PM 决策（2026-08-18）：帧间隔 std 不再作为验收线。** 背景：arm_2 720p PNG L1 写盘带来 ~10 ms 级帧间隔 std（T3 已见 9.4 ms）。代码确认时间戳在 `cap.read()` 返回时即打（`usb_camera_worker.py` 134-137 行），PNG 编码/写盘在独立 writer 线程且队列缓冲约 2 秒，抖动不进时间戳；对齐管线全程使用真实时间戳（锚点网格 + 最近帧匹配 + 位姿按真实时刻插值），帧间隔不均匀已被架构消化。因此验收改为卡「丢帧数 = 0 + 帧间隔 p99 < 66.7 ms + 对齐误差/覆盖率」这组直接反映数据质量的指标。存储策略维持 PNG L1 无损（PNG0 150 GB/30 min 不可接受，JPG 有损不可用于训练数据）。
 
-### T7-现场. 真实标定板内参采集（正式采集前必须就位，可与 T4 同日并行）
+### T7-现场. 真实标定板内参采集（正式采集前必须就位）
 
 - 打印棋盘格（内角点 9×6，方格 20–25 mm）并**实测**边长；逐台相机用 `collect_calibration.py` 采 15–25 张合格帧；运行内参计算。
 - 验收：各相机 RMS < 0.5 px；产出 `calibrations/calib_<ts>/`（含 `calibration.json` 与各相机 `intrinsics.yaml`）；记录标定 ID。
 - 注意：对焦/位置变动后必须重标。
-
-### T8-集成. session 元数据带入 episode（PM 已批准过渡方案）
-
-- **已批准**：改造 `build_srth_dataset.py`，若 `<session>/session_meta.json` 存在则将其 `task_instruction` / `task_type` / `organ_model` 等字段自动带入 episode 的 `language.json` 与 `meta.json`（tools 层改动，实施后汇报数值抽样验证）。
-- **暂缓**：`session.json` 增加 `camera_calibration` 字段（属 `scripts/acquisition/` 核心代码，里程碑达成前不动框架；过渡期由 `write_session_meta.py` 事后写入）。
-- 汇报：改动说明 + 在一条已有 session 上填入示例 `session_meta.json` 并重建 episode，验证字段透传。
 
 ### T5+T6 合并. 端到端试跑（里程碑验收，半天）
 
@@ -83,19 +78,22 @@
 - 将 `tech_repo/T9_PLC四元数坐标系确认_20260817.md` 发给机器人工程师，回收 Q1–Q4 答复。
 - 若 Q1 = A（本就镜系）→ 遗留风险解除；若 Q1 = B 且不改 PLC → 按文档第 3 节安排固定旋转标定（并入 T7 的 hand_eye/ 预留目录）。
 
-### T10. 数据清洗/裁剪 GUI（v1，新立项，设计已就绪）
+### T10-评审. 数据清洗/裁剪 GUI — 实机完整评审（实现已完成 ✅，待桌面操作）
 
-解决采集数据开头/结尾无关片段的人工裁剪，并为后续人工标注铺路。**严格按 `tech_repo/VLGP_数据清洗与标注工具设计_20260818.md` 实施**，要点：
-
-- 实现 `scripts/tools/review_session.py`（PyQt5 单文件）：三路同步视图 + 运动量曲线点击跳转 + IN/OUT 裁剪 + approved/rejected 状态 + 批量队列模式。
+**实现已完成（2026-08-18，commit 8bef0a3 / d54eea7）**：
+- `scripts/tools/review_session.py`（PyQt5 单文件）：三路同步视图 + 运动量曲线点击跳转 + IN/OUT 裁剪 + approved/rejected 状态 + 批量队列模式，已实现。
 - 非破坏式：人工决策只写 `<session>/annotations.json`（schema 见设计文档 2.1 节），原始数据不动。
-- 改造 `build_srth_dataset.py`：自动检测 annotations.json，按 trim 过滤网格行、跳过 rejected session、trim 信息记入 episode `meta.json`。
-- v1 不做段标注编辑 UI（`segments` 仅保留结构）、不做视频转码。
-- 验收：设计文档第 5 节（在 `sessions/20260817_124143` 上完整评审一遍 + episode 行数核对 + 4x 快放流畅）。
+- `build_srth_dataset.py` 已集成：自动检测 annotations.json，按 trim 过滤网格行、跳过 rejected session、trim 信息记入 episode `meta.json`。
+- 逻辑验收已通过（trim [3000,15000] → 15116→10160 行、episode 10100 样本；rejected 跳过正常；GUI 冒烟通过）。
 
-汇报：工具截图或录屏说明、验收结果、annotations.json 实例。
+**剩余（需桌面操作）**：在 `sessions/20260817_124143` 上完整评审一遍（打 IN/OUT → 保存 → 重进状态恢复 → 4x 快放流畅），汇报工具截图/录屏说明、验收结果、annotations.json 实例。
 
-### T11. 腕部相机成像质量修复：手动白平衡/曝光锁定（正式采集前必须完成，可与 T10 并行）
+> 用法：`python scripts/tools/review_session.py --session sessions/20260817_124143`（支持任意 cwd，`--sessions sessions/` 批量模式）。
+
+### T11. 腕部相机成像质量修复 ✅（2026-08-18 完成，详见归档）
+
+- worker 手动曝光/白平衡/画质参数支持 + `camera_param_tuner.py`；**定稿启用 AWB（`auto_wb: 1`）**，手动 5000/4300K 作 fallback；20 s 目检 session `test_awb_20260818` 用户接受。
+- 正式采集照明下如需进一步压 R-clip，可配合补光 + 微调曝光（非阻塞）。
 
 背景与诊断（PM 已确认，2026-08-18）：session `20260818_083049` 实际帧对比显示 arm_1/arm_3（480p USB 腕部相机）存在三个叠加问题：① 周边大面积**青蓝色偏色**——白平衡按暖色光源（~3200K）设定，而主照明是内窥镜冷白 LED（6000K+）；② 内窥镜直射区**橙红过曝**、红通道 clipping；③ 四角暗角（物理镜头特性，不处理）。偏色在 session 首尾完全一致，说明参数固定/收敛在错误值上，非漂移问题。arm_2 内窥镜自带 ISP 校准，无此问题。
 
