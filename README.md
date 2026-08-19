@@ -39,7 +39,27 @@ python -m vlgp.alignment.align_camera_anchor --session sessions/<session_name>
 python -m vlgp.review.process_session --session sessions/<session_name> [--meta] [--skip-review] [--skip-video]
 ```
 
-**逐步方式**（需要单独控制某一步时使用；详细规范见 `tech_repo/VLGP_标定与元数据规范_20260817.md` 第 6 节）：
+**Windows 启动器（scripts/tools/*.bat，逐步方式）**：每个处理步骤都有对应 .bat（双击即可，会自动询问 session 名并写日志到 scripts/tools/）：
+
+| .bat | 对应命令 | 用途 |
+|---|---|---|
+| `start_manual_acquisition.bat` | `vlgp.capture.manual_acquisition` | 手动开始/停止采集 |
+| `camera_assignment_setup.bat` | `vlgp.capture.camera_assignment_gui` | 摄像头分配设置（GUI） |
+| `preview_single_camera.bat` | `vlgp.capture.preview_single_camera` | 单相机预览/对焦 |
+| `preview_connected_cameras.bat` | `vlgp.capture.preview_connected_cameras` | 多相机批量预览 |
+| `write_session_meta.bat` | `vlgp.review.write_session_meta` | 当场补录任务元数据（不可回溯，先做） |
+| `verify_alignment.bat` | `vlgp.alignment.verify_alignment` | 对齐预检（漂移/同步质量） |
+| `align_camera_anchor.bat` | `vlgp.alignment.align_camera_anchor` | 生成 30 Hz 相机锚点对齐表 |
+| `review_session.bat` | `vlgp.review.review_session` | 人工裁剪/审核 GUI（IN/OUT + 状态） |
+| `build_srth_dataset.bat` | `vlgp.dataset.build_srth_dataset` | 构建 SRT-H 训练 episode |
+| `images_to_video.bat` | `vlgp.dataset.images_to_video` | 目检视频生成 |
+| `analyze_session.bat` | `vlgp.analysis.analyze_session` | Session 综合分析（fps/RTT/漂移） |
+| `analyze_gripper.bat` | `vlgp.analysis.analyze_gripper` | gripper 量程/方向分析 |
+| `collect_calibration.bat` | `vlgp.calibration.collect_calibration` | 标定板内参采集 |
+| `camera_param_tuner.bat` | `vlgp.calibration.camera_param_tuner` | 相机曝光/白平衡实时调参 |
+| `process_session.bat` | `vlgp.review.process_session` | 一键完整流水线 |
+
+**逐步方式（命令行）**（需要单独控制某一步时使用；详细规范见 `tech_repo/VLGP_标定与元数据规范_20260817.md` 第 6 节）：
 
 ```bash
 # 1. 当场补录元数据（任务指令/任务类型/操作者/标定 ID，不可回溯，先做）
