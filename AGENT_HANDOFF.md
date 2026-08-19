@@ -1,6 +1,6 @@
 # AGENT 任务交接：开始采集标注/训练数据前的就绪工作
 
-> 创建日期：2026-08-16；最近更新：2026-08-18（项目管理 Agent：PM 验收 T4/T8/T10/T11 通过；新增 T12 采集框架健壮性与存储优化（里程碑后第一批执行）；剩余 T5+T6 / T7-现场 / T9-跟进 / T10-实机评审 / T12）。
+> 创建日期：2026-08-16；最近更新：2026-08-19（项目管理 Agent：**里程碑验收（T5+T6）暂缓**，等待机器人工程师答复标定方法等内容（T9 阻塞中）；T12+T13 合并为当前优先工作，解除「冲刺期间不动框架」限制，可立即动工）。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -58,7 +58,9 @@
 - 验收：各相机 RMS < 0.5 px；产出 `calibrations/calib_<ts>/`（含 `calibration.json` 与各相机 `intrinsics.yaml`）；记录标定 ID。
 - 注意：对焦/位置变动后必须重标。
 
-### T5+T6 合并. 端到端试跑（里程碑验收，半天）
+### T5+T6 合并. 端到端试跑（里程碑验收，半天）—— ⏸️ 暂缓（2026-08-19 PM 决定）
+
+> 暂缓原因：机器人工程师尚未答复标定方法等内容（见 T9-跟进），里程碑验收等答复后再安排。暂缓期间优先执行 T12+T13。
 
 采一条 1–3 分钟演示 session，**同一条 session 内编排三段**：
 
@@ -74,7 +76,7 @@
 
 汇报：完整指标表（fps、对齐覆盖率与误差、样本数、动作数值范围、gripper 方向结论、目检结论）、发现的问题清单。通过后由项目管理 Agent 宣告里程碑达成。
 
-### T9-跟进. PLC 四元数坐标系确认（不阻塞里程碑，正式大规模采集前必须闭环）
+### T9-跟进. PLC 四元数坐标系确认（⏸️ 等待工程师答复中；正式大规模采集前必须闭环）
 
 - 将 `tech_repo/T9_PLC四元数坐标系确认_20260817.md` 发给机器人工程师，回收 Q1–Q4 答复。
 - 若 Q1 = A（本就镜系）→ 遗留风险解除；若 Q1 = B 且不改 PLC → 按文档第 3 节安排固定旋转标定（并入 T7 的 hand_eye/ 预留目录）。
@@ -116,7 +118,7 @@
 
 汇报：生效属性清单（含回读值）、调定后的参数值、验证 session 的抽帧对比图与帧间稳定性数据。若驱动不支持手动控制，停下来汇报，转入兜底方案评估。
 
-### T12. 采集框架健壮性与存储优化（PM 代码评审立项，里程碑后第一批执行；**里程碑冲刺期间不动 `scripts/acquisition/`**）
+### T12. 采集框架健壮性与存储优化（PM 代码评审立项；**2026-08-19 起解除冲刺限制，与 T13 合并执行，一次回归**）
 
 来源：2026-08-18 PM 对 `scripts/acquisition/` 的框架级评审。按优先级分三档：
 
@@ -140,6 +142,46 @@
 **可观测性增强（可选，推荐）**：worker 周期性输出采集统计（fps、队列深度、累计丢帧数），或写计数文件，使长录期间的丢帧实时可见（T3/T4 调试时丢帧只能事后从 stdout 回放确认）。
 
 验收：P1 三项完成 + 全链路回归（30 s 采集 → `verify_alignment.py` → `align_camera_anchor.py` → `build_srth_dataset.py` 跑通）；汇报各项改动点、下游兼容性核对清单、回归指标。
+
+### T13. 仓库布局迁移：src 包 + 按功能分包（2026-08-19 PM 立项，与 T12 合并执行）
+
+目标：参照 `dvrk_multimodal_data_collection` 的 `src/` 布局，把代码从「20 个平铺脚本 + sys.path hack」迁移为可安装包 + 功能分包。
+
+**目标结构**：
+
+```text
+data_alignment/
+├── pyproject.toml                    # 可安装包（pip install -e .），删除全部 sys.path hack
+├── src/vlgp/
+│   ├── acquisition/                  # 原 scripts/acquisition/，内部结构不动
+│   ├── alignment/                    # align_camera_anchor / verify_alignment / calibrate_temporal_drift / analyze_alignment
+│   ├── dataset/                      # build_srth_dataset / pack_session / images_to_video
+│   ├── review/                       # review_session / process_session / write_session_meta / annotations schema
+│   ├── calibration/                  # collect_calibration / camera_param_tuner
+│   ├── analysis/                     # analyze_session / analyze_gripper 等只读分析
+│   └── capture/                      # manual_acquisition / camera_assignment_* / preview_*
+├── scripts/
+│   ├── run_acquisition.py            # 只保留真正的入口脚本
+│   └── config/                       # YAML 配置（不变）
+└── sessions/  calibrations/  tech_repo/ ...
+```
+
+**执行要点与易漏项（按此 checklist 逐项核对）：**
+
+1. 新建 `pyproject.toml`（`pip install -e .` 后 `vlgp` 可导入），删除 12 个工具脚本里的全部 `sys.path.insert` hack；每个功能包内把 CLI 入口（argparse/main）与核心逻辑分开，核心逻辑可被 import 复用（如 `build_srth_dataset` 的四元数/6D 旋转工具函数）。
+2. **worker 子进程拉起方式**（最易漏）：`usb_camera_process.py` 目前手工设 `PYTHONPATH` + `python -m acquisition.process_workers.usb_camera_worker`，迁移后改为 `-m vlgp.acquisition.process_workers...`，并移除手工 PYTHONPATH（包已安装）。
+3. 路径常量收口进 `vlgp/acquisition/session_layout.py`（对齐表、`annotations.json`、`session_meta.json`、episode 输出路径），工具只 import 不拼字符串；`_resolve_session` / `resolve_session` 两份重复实现合并为一份。
+4. 确认 `unify_alignment.py`、`analyze_alignment.py` 是否已被锚点方案取代，是则移入 archive。
+5. 同步更新所有引用：README、AGENT_HANDOFF、备忘文档中的命令、`scripts/tools/*.bat`（bat 顺手把绝对路径改成 `%~dp0` 相对推导 + python 路径走环境变量 fallback）。
+6. 核心参数魔法数字（15 ms 匹配阈值 / 30 Hz / 60 步 chunk）集中到 `vlgp/constants.py`。
+
+**数据产物零影响**：CSV/JSON schema 不变，只动代码位置。
+
+**验收（T12+T13 合并回归，一次跑完）**：
+
+- `pip install -e .` 后任意 cwd 下 `python -c "import vlgp.acquisition"` 成功；
+- 全链路回归：30 s 采集 → verify → align → review（GUI 冒烟）→ build → video 全部通过；
+- 汇报：迁移映射表（旧路径 → 新路径）、引用更新清单、回归指标、发现的遗留问题。
 
 ### 里程碑达成后立即排期（非阻塞，先立项不实施）
 

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vlgp"
+version = "0.1.0"
+description = "VLGP multi-modal surgical data acquisition, alignment and dataset tooling"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "pyyaml",
+    "opencv-python",
+    "pyads",
+    "pyarrow",
+    "PyQt5",
+]
+
+[project.scripts]
+vlgp-acquire = "vlgp.capture.manual_acquisition:main"
+vlgp-run = "vlgp.capture.manual_acquisition:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+vlgp = ["py.typed"]

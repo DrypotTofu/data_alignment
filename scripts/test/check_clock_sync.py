@@ -18,7 +18,6 @@ import time
 from pathlib import Path
 
 # Allow importing from the parent scripts package.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 try:
     import pyads
@@ -28,7 +27,7 @@ except OSError as e:
     else:
         raise
 
-from acquisition.timestamp import filetime_to_ns
+from vlgp.acquisition.timestamp import filetime_to_ns
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)

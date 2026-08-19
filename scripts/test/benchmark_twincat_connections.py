@@ -6,9 +6,8 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from acquisition.sources.twincat import TwinCATConfig, TwinCATSource
+from vlgp.acquisition.sources.twincat import TwinCATConfig, TwinCATSource
 
 
 def benchmark(num_connections: int, duration_s: float = 3.0) -> dict:

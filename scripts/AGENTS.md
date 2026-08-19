@@ -2,27 +2,29 @@
 
 ## Project Layout
 
-- `scripts/` — data processing and acquisition scripts.
-  - `run_acquisition.py` — **main entry point** for multi-modal recording sessions.
+- `src/vlgp/` — **installable package** (T13; `pip install -e .`, import as `vlgp.*`).
   - `acquisition/` — **unified multi-modal acquisition framework** (Session + pluggable DataSources).
     - `sources/` — active sources: `twincat`, `usb_camera_process`, `reserved_arm`.
-    - `sources/legacy/` — **deprecated** thread-based camera sources (`usb_camera`, `usb_multi_camera`) and the `endoscope` placeholder. Kept only for backward compatibility; do not use for new work.
-  - `config/` — YAML session configs for `run_acquisition.py`.
-    - `default.yaml` — current working multi-arm full-data configuration.
-    - `single_arm.yaml` — fallback single-arm configuration.
-    - `archive/three_cameras_legacy.yaml` — historical thread-based three-camera config; use `default.yaml` for current three-camera work.
-    - `example_acquisition.yaml` — documented example.
-    - `archive/` — historical one-off test configs (no longer used).
-  - `tools/` — post-processing and alignment utilities.
-    - `align_camera_anchor.py` — SRT-H-style alignment: camera-anchored 30 Hz grid + LERP/SLERP pose interpolation for all 4 arms.
-    - `verify_alignment.py` — align each video camera's frames to TwinCAT robot poses.
-    - `unify_alignment.py` — robot-anchored unified CSV (nearest frame from all cameras).
-    - `analyze_alignment.py` — alignment error distributions, histograms, CDF, time-series.
-    - `analyze_session.py` — TwinCAT sampling rate/RTT, camera FPS stability, PLC-PC drift residual, cross-modal timeline.
-    - `calibrate_temporal_drift.py` — estimate and correct camera timestamp drift against host clock.
-    - `camera_assignment_setup.py` — interactive camera-to-arm assignment + real FPS benchmark.
-    - `preview_connected_cameras.py` / `preview_single_camera.py` — camera preview helpers.
-  - `test/` — TwinCAT benchmarks + diagnostics (`archive/` holds retired validation scripts).
+    - `sources/legacy/` — **deprecated** thread-based camera sources; kept only for backward
+      compatibility with a runtime deprecation warning (T12-P2-5); do not use for new work.
+    - `process_workers/` — camera subprocess worker (launched as `-m vlgp.acquisition...`).
+  - `alignment/` — `align_camera_anchor` / `verify_alignment` / `calibrate_temporal_drift`
+    (superseded `unify_alignment` moved to `alignment/archive/`).
+  - `dataset/` — `build_srth_dataset` / `pack_session` / `images_to_video`.
+  - `review/` — `review_session` (GUI trim) / `process_session` (pipeline driver) /
+    `write_session_meta`.
+  - `calibration/` — `collect_calibration` / `camera_param_tuner`.
+  - `analysis/` — `analyze_session` / `analyze_gripper`.
+  - `capture/` — `manual_acquisition` / `camera_assignment_gui` / `camera_assignment_setup` /
+    `preview_*`.
+  - `constants.py` — shared magic numbers (30 Hz, 15 ms threshold, 60-step chunk, ...).
+- `scripts/` — entry points + config + Windows launchers.
+  - `run_acquisition.py` — **main entry point** for multi-modal recording sessions
+    (imports `vlgp.acquisition`).
+  - `config/` — YAML session configs (`default.yaml` current; `archive/` historical).
+  - `tools/*.bat` — Windows launchers; paths derived from `%~dp0` (T13), python via conda
+    fallback.
+  - `test/` — TwinCAT benchmarks + diagnostics (`archive/` holds retired scripts).
 
 ## Conda Environment
 

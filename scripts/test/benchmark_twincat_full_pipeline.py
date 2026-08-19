@@ -5,12 +5,11 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pyads
 
-from acquisition.session import AcquisitionSession, SessionConfig
-from acquisition.sources.twincat import TwinCATConfig, TwinCATSource
+from vlgp.acquisition.session import AcquisitionSession, SessionConfig
+from vlgp.acquisition.sources.twincat import TwinCATConfig, TwinCATSource
 
 
 def main():

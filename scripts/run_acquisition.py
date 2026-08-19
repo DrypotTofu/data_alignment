@@ -14,9 +14,9 @@ import threading
 import time
 from pathlib import Path
 
-from acquisition import AcquisitionSession
-from acquisition.config import load_config
-from acquisition.registry import build_source_from_config
+from vlgp.acquisition import AcquisitionSession
+from vlgp.acquisition.config import load_config
+from vlgp.acquisition.registry import build_source_from_config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +52,7 @@ def main():
     session.start()
 
     # Check whether any source must run in the main thread.
-    main_thread_sources = [s for s in session._sources.values() if s.runs_in_main_thread]
+    main_thread_sources = session.main_thread_sources
 
     if main_thread_sources:
         # For timed recordings with main-thread sources, start a background
