@@ -1,6 +1,6 @@
 # AGENT 任务交接：开始采集标注/训练数据前的就绪工作
 
-> 创建日期：2026-08-16；最近更新：2026-08-19（项目管理 Agent：**里程碑验收（T5+T6）暂缓**，等待机器人工程师答复标定方法等内容（T9 阻塞中）；T12+T13 合并为当前优先工作，解除「冲刺期间不动框架」限制，可立即动工）。
+> 创建日期：2026-08-16；最近更新：2026-08-19（执行 Agent：T12+T13 完成，详见任务状态；剩余 T5+T6 ⏸️ / T7-现场 / T9-跟进 / T10-实机评审）。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -118,70 +118,23 @@
 
 汇报：生效属性清单（含回读值）、调定后的参数值、验证 session 的抽帧对比图与帧间稳定性数据。若驱动不支持手动控制，停下来汇报，转入兜底方案评估。
 
-### T12. 采集框架健壮性与存储优化（PM 代码评审立项；**2026-08-19 起解除冲刺限制，与 T13 合并执行，一次回归**）
+### T12. 采集框架健壮性与存储优化 ✅（2026-08-19 完成，与 T13 合并回归）
 
-来源：2026-08-18 PM 对 `scripts/acquisition/` 的框架级评审。按优先级分三档：
+- **P1**：① 相机死亡 fail-fast（worker 读帧失败非零退出；`_wait_for_ready` 超时/早退 raise；`session.json` 记 `worker_exit_codes`）；② TwinCAT CSV 瘦身（常量→`robot_pose/meta.json` sidecar，行内留逐样本字段；下游 `verify/align/analyze/calibrate_drift` 列名核对通过）；③ `orientation_order` 字符串修正。
+- **P2**：重复 `--topic` 移除；legacy deprecation warning + `usb_multi_camera` 校验分支删除；分层泄漏收口（`main_thread_sources`/`attach_session`/`run_in_main_thread`）；`import csv` 移顶、CSV 统一 `utf-8-sig`。
+- **P3**：`session.py` docstring 目录布局、PNG 注释更新。
+- **回归**：30 s 采集 `20260819_051024` 三路 30.0 fps、TwinCAT 43392 样本、verify/align/build 全通；`worker_exit_codes={}`。commit e57b91f。
+- **遗留**：可观测性增强（worker 周期统计）可选未做。
 
-**P1（正式规模采集前应有）：**
+### T13. 仓库布局迁移：src 包 + 按功能分包 ✅（2026-08-19 完成，与 T12 合并回归）
 
-1. **相机死亡 fail-fast**：当前 worker 读帧失败后进程空转、`_wait_for_ready` 提前退出仅 log 不报错（`usb_camera_worker.py:113`、`usb_camera_process.py`），某路相机中途挂掉时 session 表面正常、事后才发现缺数据。要求：worker 捕获失败退出非零；source 在 ready 超时/worker 早退时 raise 让 session 启动中止；运行期死亡至少在 `session.json` 记录非零退出码。
-2. **TwinCAT CSV 瘦身**：`_build_sample` 的常量元数据（ams_net_id、ip、master_offset_ns 等 ~12 个字段）目前逐行写入 CSV（`twincat.py` `TwinCATWriter.write`），300 Hz × 4 臂下体积和解析成本放大数倍。改为：常量写入 `robot_pose/meta.json` sidecar，每行只留逐样本变化字段（`pc_arrival_ns`、`rtt_ns`、`twincat_cycle_count`）。⚠️ 改 CSV schema，**必须先核对 `align_camera_anchor.py` / `analyze_gripper.py` 等下游读取的列名清单并在汇报中给出兼容性说明**。
-3. **修正过时元数据字符串**：`'orientation_order': 'wxyz (to be confirmed)'`——wxyz 已于 2026-08-16 确认，改为确定表述或删除该字段。
-
-**P2（顺手清理）：**
-
-4. 删除 worker 启动命令中重复的 `'--topic'` 传参（`usb_camera_process.py:111` 与 `:118`）。
-5. legacy 源从 `registry.py` 的活注册中移除（或加 deprecation warning），同步删除 `config.py` 的 `usb_multi_camera` 校验分支——与「legacy 只读」约定对齐。
-6. 分层泄漏收口：`run_acquisition.py:55-79` 访问 `session._sources`、`session.run_main_thread_sources()` 戳 `source._started_at_ns/_stop_event`、`usb_camera_process.py` 用 `getattr(self,'_session_dir')`。补公共 API（如 `session.main_thread_sources`、`source.attach_session(dir)`）。
-7. 删除 `capture_loop` 未使用的 `fps` 参数（`usb_camera_worker.py:84`）；`_TwinCATCsvWriter` 的 `import csv` 移到模块顶部（`twincat.py:559`）；TwinCAT CSV 与相机 metadata.csv 统一 `utf-8-sig` 编码。
-
-**P3（文档/注释同步，改代码时一并做）：**
-
-8. `session.py:11-14` 模块 docstring 的目录布局更新为实际的 `camera_arm_N` + `robot_pose/robot_pose_armN`；`USBCameraProcessConfig` 与 worker `--png-compression` 的过时注释改为当前生产结论（T3 实测：PNG L1 + writer_threads=6 达标 720p30）。
-
-**可观测性增强（可选，推荐）**：worker 周期性输出采集统计（fps、队列深度、累计丢帧数），或写计数文件，使长录期间的丢帧实时可见（T3/T4 调试时丢帧只能事后从 stdout 回放确认）。
-
-验收：P1 三项完成 + 全链路回归（30 s 采集 → `verify_alignment.py` → `align_camera_anchor.py` → `build_srth_dataset.py` 跑通）；汇报各项改动点、下游兼容性核对清单、回归指标。
-
-### T13. 仓库布局迁移：src 包 + 按功能分包（2026-08-19 PM 立项，与 T12 合并执行）
-
-目标：参照 `dvrk_multimodal_data_collection` 的 `src/` 布局，把代码从「20 个平铺脚本 + sys.path hack」迁移为可安装包 + 功能分包。
-
-**目标结构**：
-
-```text
-data_alignment/
-├── pyproject.toml                    # 可安装包（pip install -e .），删除全部 sys.path hack
-├── src/vlgp/
-│   ├── acquisition/                  # 原 scripts/acquisition/，内部结构不动
-│   ├── alignment/                    # align_camera_anchor / verify_alignment / calibrate_temporal_drift / analyze_alignment
-│   ├── dataset/                      # build_srth_dataset / pack_session / images_to_video
-│   ├── review/                       # review_session / process_session / write_session_meta / annotations schema
-│   ├── calibration/                  # collect_calibration / camera_param_tuner
-│   ├── analysis/                     # analyze_session / analyze_gripper 等只读分析
-│   └── capture/                      # manual_acquisition / camera_assignment_* / preview_*
-├── scripts/
-│   ├── run_acquisition.py            # 只保留真正的入口脚本
-│   └── config/                       # YAML 配置（不变）
-└── sessions/  calibrations/  tech_repo/ ...
-```
-
-**执行要点与易漏项（按此 checklist 逐项核对）：**
-
-1. 新建 `pyproject.toml`（`pip install -e .` 后 `vlgp` 可导入），删除 12 个工具脚本里的全部 `sys.path.insert` hack；每个功能包内把 CLI 入口（argparse/main）与核心逻辑分开，核心逻辑可被 import 复用（如 `build_srth_dataset` 的四元数/6D 旋转工具函数）。
-2. **worker 子进程拉起方式**（最易漏）：`usb_camera_process.py` 目前手工设 `PYTHONPATH` + `python -m acquisition.process_workers.usb_camera_worker`，迁移后改为 `-m vlgp.acquisition.process_workers...`，并移除手工 PYTHONPATH（包已安装）。
-3. 路径常量收口进 `vlgp/acquisition/session_layout.py`（对齐表、`annotations.json`、`session_meta.json`、episode 输出路径），工具只 import 不拼字符串；`_resolve_session` / `resolve_session` 两份重复实现合并为一份。
-4. 确认 `unify_alignment.py`、`analyze_alignment.py` 是否已被锚点方案取代，是则移入 archive。
-5. 同步更新所有引用：README、AGENT_HANDOFF、备忘文档中的命令、`scripts/tools/*.bat`（bat 顺手把绝对路径改成 `%~dp0` 相对推导 + python 路径走环境变量 fallback）。
-6. 核心参数魔法数字（15 ms 匹配阈值 / 30 Hz / 60 步 chunk）集中到 `vlgp/constants.py`。
-
-**数据产物零影响**：CSV/JSON schema 不变，只动代码位置。
-
-**验收（T12+T13 合并回归，一次跑完）**：
-
-- `pip install -e .` 后任意 cwd 下 `python -c "import vlgp.acquisition"` 成功；
-- 全链路回归：30 s 采集 → verify → align → review（GUI 冒烟）→ build → video 全部通过；
-- 汇报：迁移映射表（旧路径 → 新路径）、引用更新清单、回归指标、发现的遗留问题。
+- `pyproject.toml`（`pip install -e .` → `import vlgp.*`），删除全部 sys.path hack。
+- `src/vlgp/{acquisition,alignment,dataset,review,calibration,analysis,capture}`；`constants.py` 集中魔法数字；路径常量收口 `session_layout`。
+- worker 子进程 `-m vlgp.acquisition.process_workers...`（无手工 PYTHONPATH）。
+- unify_alignment / analyze_alignment 移入 `archive/`（被锚点方案取代）。
+- bat 启动器改 `%~dp0` 相对路径 + conda python fallback；README/AGENTS.md 引用更新。
+- **迁移后调用**：`python -m vlgp.alignment.align_camera_anchor --session ...` 等；`scripts/run_acquisition.py` 为采集入口。
+- **验收**：任意 cwd `import vlgp.acquisition` ✅；全链路回归（采集→verify→align→build）✅。commit e57b91f。
 
 ### 里程碑达成后立即排期（非阻塞，先立项不实施）
 

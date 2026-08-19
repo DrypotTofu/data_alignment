@@ -29,6 +29,7 @@
 14. **T4 三路 30 Hz 全量验证通过（2026-08-18）**：session `sessions/20260818_080808`（30 s）——arm_1 30.028 / arm_2 30.011 / arm_3 30.026 fps（≥29.9 ✅）；对齐误差 mean ~0.9 ms；机器人有效区间内覆盖率 100%。两处待 PM 决策/知悉：① arm_2 帧间隔 std 10.6 ms 超 6 ms 验收线（720p PNG L1 写盘抖动，PNG0/JPG 可降但存储 150 GB/30min）；② 30 s session 全局覆盖率 77.5% 系相机 pre-roll（~8.5 s 启动开销）所致，10 min 为 98.5%，数据集构建已按 pose_valid 过滤不受影响。
 15. **T11 定稿（2026-08-18，用户接受）**：arm_1/arm_3 启用自动白平衡（`auto_wb: 1`），手动色温 5000/4300K 作 fallback；worker 修复 AWB 与手动色温互斥问题；`camera_param_tuner.py` 实时调参工具（trackbar 范围映射修复 + DRIVER REJECTED 提示）。实测 AWB 优于手动（白纸中性 6.1%、R-clip 0.76%/1.9%、帧间稳定）；20 s session `test_awb_20260818` 目检接受。
 16. **T10 v1 完成（2026-08-18）**：`scripts/tools/review_session.py`（PyQt5 三路同步视图 + 运动量曲线 + IN/OUT + 批量队列）+ `build_srth_dataset.py` 集成 annotations.json（rejected 跳过 / trim 过滤 / meta 记录）。逻辑验收通过（trim 15116→10160 行、episode 10100 样本）；GUI 实机完整评审待桌面操作。
+17. **T12+T13 完成（2026-08-19）**：① T13 src 包迁移——`pyproject.toml` + `src/vlgp/{acquisition,alignment,dataset,review,calibration,analysis,capture}`，`pip install -e .` 后任意 cwd 可 `import vlgp.*`；删除全部 sys.path hack；worker 子进程 `-m vlgp.acquisition...`；路径常量收口 `session_layout`、魔法数字进 `constants.py`；unify/analyze_alignment 移 archive；bat 改 `%~dp0`。② T12——相机死亡 fail-fast（worker 非零退出 + ready raise + session.json `worker_exit_codes`）、TwinCAT CSV 瘦身（常量→sidecar，行内留逐样本字段，下游兼容核对通过）、legacy deprecation、分层泄漏收口、import/编码清理、docstring 更新。回归：30s 采集（vlgp 框架）三路 30.0 fps + TwinCAT 43392 样本 + verify/align/build 全通。commit e57b91f。**迁移后命令**：`python -m vlgp.alignment.align_camera_anchor --session ...` 等（README 已更新）。
 
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
@@ -36,12 +37,14 @@
 - T2 ✅（2026-08-16）：`build_srth_dataset.py` 实现 + 离线验证通过；待真实任务 demo 验证动作数值与 mask 约定。
 - T3 ✅（2026-08-17）：10 分钟长稳测试通过（session `20260817_124143`）；30 min 版本可随 T6 一并复验。
 - T4 ✅（2026-08-18）：三路 30 Hz 全量验证通过（session `20260818_080808`）。
-- T5+T6：端到端试跑（**需机器人可动**：已知方向平移 → gripper 开合实测 → 触针/抓针演示 + 30 min 长稳复验；里程碑验收）。
+- T5+T6：端到端试跑（⏸️ 暂缓，等 T9 工程师答复；需机器人可动：已知方向平移 → gripper 开合实测 → 触针/抓针演示 + 30 min 长稳复验；里程碑验收）。
 - T7：标定流程与工具已落地；真实标定板采集待现场执行（需棋盘格）。
-- T8 ✅（2026-08-18）：工具 + 集成完成（`build_srth_dataset.py` 透传 session_meta）。
-- T9：沟通文档已准备，待机器人工程师答复 PLC 四元数坐标系。
-- T10 ✅（2026-08-18）：GUI 实现 + 集成完成；**实机完整评审待桌面操作**（在 `sessions/20260817_124143` 上打 IN/OUT 保存 + 4x 快放）。
+- T8 ✅（2026-08-18）：工具 + 集成完成。
+- T9：沟通文档已准备，⏸️ 待机器人工程师答复 PLC 四元数坐标系。
+- T10 ✅（2026-08-18）：GUI 实现 + 集成完成；**实机完整评审待桌面操作**。
 - T11 ✅（2026-08-18）：腕部相机成像质量修复完成（AWB）。
+- T12 ✅（2026-08-19）：框架健壮性（fail-fast / CSV 瘦身 / 清理 / 收口）。
+- T13 ✅（2026-08-19）：src/vlgp 包迁移完成，命令改为 `python -m vlgp.*`。
 - 已确认（2026-08-16）：四元数顺序 wxyz；PLC 输出基座系 + 镜系**位置**两套，动作标签 delta_pos 用镜系；**PLC 无镜系四元数**（delta_rot_6d 用基座系，已上报）。
 - 暂缓：EL6688 PTP、DAgger GUI、存储格式迁移（本阶段范围外）。
 
