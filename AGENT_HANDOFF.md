@@ -1,6 +1,7 @@
 # AGENT 任务交接：开始采集标注/训练数据前的就绪工作
 
 > 创建日期：2026-08-16；最近更新：2026-08-19（执行 Agent：T12+T13 完成，详见任务状态；剩余 T5+T6 ⏸️ / T7-现场 / T9-跟进 / T10-实机评审）。
+> 2026-08-20 更新：T9 工程师答复已回收（Q1=基坐标系），T9-跟进关闭；新增 T14（instrument_type 透传）；T7-现场扩展手眼标定内容。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -42,7 +43,7 @@
 - **T4 ✅（2026-08-18）**：三路 30 Hz 全量验证。session `sessions/20260818_080808`（30 s）：arm_1 30.028 / arm_2 30.011 / arm_3 30.026 fps（≥29.9 ✅）；丢帧 0（日志无 `Writer queue full, dropping frame`）；帧间隔 p99 < 66.7 ms ✅；对齐误差 mean ~0.9 ms / p99 < 15 ms ✅；机器人有效区间内覆盖率 **100%**（全局 77.5% 系相机 pre-roll ~8.5 s 启动开销，10 min session 为 98.5%，数据集构建已按 pose_valid 过滤，不受影响）。详细数据见 0803 备忘 13.5 节。
 - **T7 工具与规范 ✅（2026-08-17，现场采集待做）**：`scripts/tools/collect_calibration.py` 已就绪（示例 `calibrations/calib_example_synthetic/`）；规范见 `VLGP_标定与元数据规范_20260817.md`。剩余：真实标定板现场采集（见下方 T7-现场）。
 - **T8 工具与集成 ✅（2026-08-17 工具 / 2026-08-18 集成）**：`scripts/tools/write_session_meta.py` 已就绪；`build_srth_dataset.py` 已集成——自动读取 `<session>/session_meta.json`，将 `task_instruction`/`task_type`/`organ_model` 等透传进 episode 的 `language.json` 与 `meta.json`；已在 `sessions/20260817_124143` 上重建 episode 验证字段透传 ✅。
-- **T9 沟通文档 ✅（2026-08-17，待答复）**：`tech_repo/T9_PLC四元数坐标系确认_20260817.md` 已备好，待发机器人工程师并回收结论（见下方 T9-跟进）。
+- **T9 ✅（2026-08-17 沟通文档 / 2026-08-20 答复回收关闭）**：工程师确认 `EndEffector_Orientation` 为**机械臂基坐标系**下的器械姿态四元数（wxyz）。`delta_rot_6d` 与镜系相差常值旋转，标定并入 T7-现场；TwinCAT `instrument_type` 字段派生 T14。详见 `tech_repo/T9_PLC四元数坐标系确认_20260817.md` 答复记录。
 - **T10 实现 ✅（2026-08-18，实机评审待桌面操作）**：`scripts/tools/review_session.py`（PyQt5 单文件：三路同步视图 + 运动量曲线 + IN/OUT 裁剪 + approved/rejected/pending + 批量队列）+ `build_srth_dataset.py` 集成（rejected 跳过 / trim 过滤 / meta 记录）。逻辑验收通过（trim [3000,15000] → 15116→10160 行、episode 10100 样本；rejected 跳过正常；GUI 冒烟通过）。**实机完整评审（设计文档第 5 节）待用户桌面操作**（见下方 T10-评审）。
 - **T11 ✅（2026-08-18）**：腕部相机成像质量修复。根因：DSHOW 白平衡锁定 4600K（暖）vs 内窥镜冷白 LED → 蓝偏。方案：worker 新增手动 exposure/wb-temperature/auto-wb/brightness/contrast/saturation 支持（含回读验证）；`camera_param_tuner.py` 实时调参工具。**定稿：arm_1/arm_3 启用自动白平衡（`auto_wb: 1`），手动色温 5000/4300K 作 fallback**；实测 AWB 优于手动（白纸中性 arm_1 6.1%、R-clip 0.76%/1.9%、帧间稳定 <1%）；20 s 目检 session `test_awb_20260818` 用户接受。详见 0803 备忘 13.5 节。
 
@@ -57,10 +58,12 @@
 - 打印棋盘格（内角点 9×6，方格 20–25 mm）并**实测**边长；逐台相机用 `collect_calibration.py` 采 15–25 张合格帧；运行内参计算。
 - 验收：各相机 RMS < 0.5 px；产出 `calibrations/calib_<ts>/`（含 `calibration.json` 与各相机 `intrinsics.yaml`）；记录标定 ID。
 - 注意：对焦/位置变动后必须重标。
+- **手眼标定扩展（2026-08-20 并入，源自 T9 答复）**：T9 已确认 `EndEffector_Orientation` 四元数定义在**机械臂基坐标系**，而 `delta_rot_6d` 期望镜系动作轴，两者相差一个常值旋转 `R_arm`。内窥镜固定时该误差为常值、短期可接受（不阻塞 T5/T6 与试采集），但**正式训练数据采集前必须标定**。方案见 `T9_PLC四元数坐标系确认_20260817.md` 第 3 节：内窥镜固定、臂端标记物摆 ≥8 组位姿，与内参标定同场完成；产出 `calibrations/<id>/hand_eye/`，`build_srth_dataset.py` 读取并应用。
 
 ### T5+T6 合并. 端到端试跑（里程碑验收，半天）—— ⏸️ 暂缓（2026-08-19 PM 决定）
 
 > 暂缓原因：机器人工程师尚未答复标定方法等内容（见 T9-跟进），里程碑验收等答复后再安排。暂缓期间优先执行 T12+T13。
+> **2026-08-20 更新：T9 答复已回收（四元数=基坐标系），暂缓的技术原因已解除。** 手眼标定已并入 T7-现场，不阻塞本任务。是否启动由 PM 排期（建议与 T7-现场同场安排，一次上机完成演示 episode + 标定板采集）。
 
 采一条 1–3 分钟演示 session，**同一条 session 内编排三段**：
 
@@ -76,10 +79,25 @@
 
 汇报：完整指标表（fps、对齐覆盖率与误差、样本数、动作数值范围、gripper 方向结论、目检结论）、发现的问题清单。通过后由项目管理 Agent 宣告里程碑达成。
 
-### T9-跟进. PLC 四元数坐标系确认（⏸️ 等待工程师答复中；正式大规模采集前必须闭环）
+### T9-跟进. PLC 四元数坐标系确认 ✅（2026-08-20 答复回收，关闭）
 
-- 将 `tech_repo/T9_PLC四元数坐标系确认_20260817.md` 发给机器人工程师，回收 Q1–Q4 答复。
-- 若 Q1 = A（本就镜系）→ 遗留风险解除；若 Q1 = B 且不改 PLC → 按文档第 3 节安排固定旋转标定（并入 T7 的 hand_eye/ 预留目录）。
+- **Q1 = B**：`EndEffector_Orientation` 是器械在**机械臂基坐标系**下的四元数姿态（工程师确认）。
+- **Q3 = wxyz**：已于 2026-08-16 实测确认，无需改动。
+- 结论：`delta_rot_6d` 当前用基座系四元数计算，与镜系动作轴相差常值旋转 `R_arm`；内窥镜固定时误差为常值，短期可接受。固定旋转标定已并入 **T7-现场**（见上），正式训练数据采集前闭环。
+- 附带收获：TwinCAT 数据含 `instrument_type` 逐样本字段，对照表见 `tech_repo/器械编码对照表.md`（0=无器械，1=大号持针钳 … 13=内窥镜）→ 派生 **T14**。
+
+### T14. instrument_type 透传进数据集与元数据（新立项 2026-08-20）
+
+背景：TwinCAT CSV 已含 `instrument_type`（每臂每样本的器械类型编号），对照表在 `tech_repo/器械编码对照表.md`。SRT-H 式数据集中器械身份是重要条件信息，应在数据构建阶段带入，避免后期回填。
+
+任务内容：
+
+1. `build_srth_dataset.py`：从对齐后的 TwinCAT 数据读取每条臂的 `instrument_type`（取 episode 区间众数/首帧值， episode 内换器械属异常情况，检测到时在 meta 中记录警告），写入 episode `meta.json`（如 `instruments: {"psm1": {"id": 4, "name": "圆头抓取钳"}, ...}`，键名与现有臂命名约定一致）。
+2. 编号→名称解码表放入代码侧常量（对照 `tech_repo/器械编码对照表.md`，注明来源与日期），meta 中同时落 id 与中文名，避免下游依赖外部文档。
+3. `write_session_meta.py`：可选地在 `session_meta.json` 模板中预留/回填器械信息入口（若采集时已知可手工预填，构建时以 TwinCAT 实测值为准）。
+4. 用 `sessions/test_20260818_215014` 回归验证：该 session arm1 instrument_type=4，episode meta 应解出「圆头抓取钳」。
+
+验收：episode `meta.json` 含每臂器械 id+名称；器械编号超出对照表范围时落原始 id 并给警告，不中断构建；现有构建流程无回归。
 
 ### T10-评审. 数据清洗/裁剪 GUI — 实机完整评审（实现已完成 ✅，待桌面操作）
 
