@@ -2,6 +2,7 @@
 
 > 创建日期：2026-08-16；最近更新：2026-08-19（执行 Agent：T12+T13 完成，详见任务状态；剩余 T5+T6 ⏸️ / T7-现场 / T9-跟进 / T10-实机评审）。
 > 2026-08-20 更新：T9 工程师答复已回收（Q1=基坐标系），T9-跟进关闭；新增 T14（instrument_type 透传）；T7-现场扩展手眼标定内容。
+> 2026-08-20 更新 2：新增 T15（片段级任务层级与指令标注，SRT-H 语义层），详见任务清单。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -153,6 +154,28 @@
 - bat 启动器改 `%~dp0` 相对路径 + conda python fallback；README/AGENTS.md 引用更新。
 - **迁移后调用**：`python -m vlgp.alignment.align_camera_anchor --session ...` 等；`scripts/run_acquisition.py` 为采集入口。
 - **验收**：任意 cwd `import vlgp.acquisition` ✅；全链路回归（采集→verify→align→build）✅。commit e57b91f。
+
+### T15. 片段级任务层级与指令标注（SRT-H 数据语义层，新立项 2026-08-20）
+
+背景：一条 session 通常包含**多个 task / subtask（甚至 subsubtask）**——我们采用操作分级制度。SRT-H 的分层结构里，H policy 输出**任务级语言指令**（如「抓起缝针」「递线」），L policy 把指令执行为关节级动作；因此训练数据必须带「每个片段是什么操作 + 对应指令」的语义层。当前 `review_session.py` 只解决「留哪段」（整段 IN/OUT 裁剪 + approved/rejected），无法表达片段级语义，数据缺语言条件层，高层策略无从训练。
+
+预期实现效果：
+
+1. **片段划分**（review_session.py 扩展）：在 trim 后的有效区间内，人工划分若干**连续、不重叠、全覆盖**的片段（播放中打 segment 边界，或从运动量曲线辅助定位）。每个片段挂：
+   - **层级路径**：task / subtask（/ subsubtask），从**受控词表**选择（操作分级制度固化为配置文件，如 `scripts/config/task_hierarchy.yaml`，支持后续扩充）；
+   - **语言指令**：该片段对应的指令文本——即 SRT-H 中 H policy 输出的指令形式，作为低层样本的语言条件；
+   - （v2）**corrective 标记**：该片段是否为纠错动作，与备忘 13.3.5 节的纠正指令生成联动。
+2. **非破坏式存储**：片段标注并入 `<session>/annotations.json`（schema 扩展 `segments: [{start_row, end_row, path, instruction, corrective?}]`，行号语义与 trim 一致=对齐表 0-based 行号；**向后兼容**仅含 trim/status 的旧标注）。
+3. **构建集成**（build_srth_dataset.py）：按片段边界标记样本——每个 chunk 可查询所属片段的层级路径与指令；episode 的语言条件由片段指令生成（替代当前单一 `task_instruction` 透传），跨片段边界的 chunk 按起始步归属或剔除（实现时定稿并记录）。
+4. **高层训练对预留**：片段边界 + 指令天然构成 H policy 训练对（片段首帧图像 + 状态 → 指令），在 meta 中保留片段索引以便后续导出。
+
+分期：**v1（本期目标）**＝片段划分 + 单层 task + 指令文本 + 构建集成；**v2（里程碑后）**＝subtask/subsubtask 层级树、corrective 标记与纠正指令自动生成联动、H policy 训练对导出工具。
+
+验收：在一条含 ≥2 个操作阶段的演示 session 上完成标注 → 重建数据集 → 抽检 chunk 的语言条件与片段归属正确；仅含旧 schema（trim/status）的 session 构建无回归；GUI 冒烟通过。
+
+依赖与前置：
+- **受控词表先行**：任务分级制度（有哪些 task/subtask、命名规范）由 PM 与操作者先定义一版草案（写进 `task_hierarchy.yaml` + 备忘），GUI 按词表渲染选择器，不允许自由文本，保证标注一致性。
+- 建议在 T10-评审之后实施（工具稳定性已确认再扩功能）。
 
 ### 里程碑达成后立即排期（非阻塞，先立项不实施）
 
