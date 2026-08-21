@@ -56,6 +56,20 @@ def interactive_prompt(meta: dict) -> dict:
     meta['operator'] = _ask('operator', meta.get('operator', ''))
     meta['organ_model'] = _ask('organ/model id', meta.get('organ_model', ''))
     meta['camera_calibration'] = _ask('calibration id (T7)', meta.get('camera_calibration', ''))
+    # T14: instrument entry is optional here — when known at capture time it can
+    # be pre-filled, but episode building always takes the TwinCAT-measured
+    # instrument_type as the source of truth (see build_srth_dataset).
+    instr = meta.get('instruments') or {}
+    instr_hint = ','.join(f'{k}={v}' for k, v in instr.items()) if instr else ''
+    instr_str = _ask('instruments (optional, e.g. arm_1=圆头抓取钳,arm_3=持针钳; '
+                     'measured value wins at build time)', instr_hint)
+    if instr_str:
+        parsed = {}
+        for pair in instr_str.split(','):
+            if '=' in pair:
+                k, v = pair.split('=', 1)
+                parsed[k.strip()] = v.strip()
+        meta['instruments'] = parsed
     meta['notes'] = _ask('notes', meta.get('notes', ''))
     return meta
 

@@ -76,6 +76,33 @@ ORIENT_COLS = [f'arm{a}_orientation_{c}' for a in ARMS
 GRIPPER_COLS = [f'arm{a}_gripper_angle' for a in ARMS]
 INSTRUMENT_COLS = [f'arm{a}_instrument_type' for a in ARMS]
 
+# T14: instrument type code -> Chinese name lookup.
+# Source: tech_repo/器械编码对照表.md (2026-08-20). Codes outside this table are
+# kept as raw ids with a warning (never abort the build).
+INSTRUMENT_NAME = {
+    0: '无器械/未知器械',
+    1: '大号持针钳',
+    2: '特大号持针钳',
+    3: '大力抓取钳',
+    4: '圆头抓取钳',
+    5: '直剪刀',
+    6: '弯剪刀',
+    7: '单极弧剪',
+    8: '单极电钩',
+    9: '单极电铲',
+    10: '双极尖头抓钳',
+    11: '双极圆头抓钳',
+    12: '超声刀头',
+    13: '内窥镜',
+}
+
+
+def instrument_label(code: float) -> str:
+    """Return the Chinese name for an instrument_type code, or the raw id."""
+    if code == code and int(code) in INSTRUMENT_NAME:  # not NaN
+        return INSTRUMENT_NAME[int(code)]
+    return f'unknown-{code}'
+
 
 # ---------------------------------------------------------------------------
 # Quaternion helpers and unit self-tests
@@ -491,6 +518,32 @@ def main() -> int:
             'quat_norm_mean': float(np.sqrt((quat ** 2).sum(axis=1)).mean()),
             'instrument_types': sorted(grid[f'arm{a}_instrument_type'].dropna().unique().tolist()),
         }
+
+    # T14: per-arm instrument identity into episode meta. Take the mode (most
+    # common) over the kept grid; flag mid-episode instrument swaps (should not
+    # happen in a normal demo) as a warning in meta.
+    instrument_stats = {}
+    for a in ARMS:
+        col = f'arm{a}_instrument_type'
+        if col not in grid.columns or grid[col].dropna().empty:
+            instrument_stats[f'arm{a}'] = {'present': False}
+            continue
+        vals = grid[col].dropna()
+        codes = vals.astype(int)
+        counts = codes.value_counts()
+        primary = int(counts.index[0])
+        all_codes = sorted(counts.index.tolist())
+        instrument_stats[f'arm{a}'] = {
+            'present': True,
+            'id': primary,
+            'name': instrument_label(primary),
+            'all_ids': all_codes,
+            'all_names': [instrument_label(c) for c in all_codes],
+            'swapped_within_episode': len(all_codes) > 1,
+        }
+        if len(all_codes) > 1:
+            print(f'  !! arm{a}: instrument changed within episode {all_codes} '
+                  f'-> {[instrument_label(c) for c in all_codes]} (unusual for a demo)')
     action_ranges = {
         'delta_pos_mm': {'min': float(actions[[f'arm{a}_delta_pos_{c}'
                                                for a in ARMS for c in ('x', 'y', 'z')]].values.min()),
@@ -546,6 +599,7 @@ def main() -> int:
         },
         'jaw_stats_raw': jaw_stats,
         'base_frame_poses': base_pose_stats,
+        'instruments': instrument_stats,  # T14
         'action_ranges': action_ranges,
         'hl_policy': {'interval_s': args.hl_interval_s, 'window': args.hl_window,
                       'sample_count': int(len(hl))},
