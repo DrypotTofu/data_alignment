@@ -33,6 +33,8 @@
 18. **T14 完成（2026-08-21）**：`build_srth_dataset.py` 将 TwinCAT 实测 `instrument_type`（episode 区间众数）写入 `meta.json['instruments']`（id + 中文名，对照 `tech_repo/器械编码对照表.md`）；超范围编号落 raw id + unknown 标签；换器械告警；`write_session_meta.py` 可选预填。合成验证 arm1=4→圆头抓取钳 ✅。commit fbc9a6f。
 19. **T16 前置核对（2026-08-21）**：SRT 约定 `q_t⁻¹⊗q_{t+1}` frame-invariant（消解 T9）；当前实现 `R1@R0^T` 非 frame-invariant。不阻塞采集；改约定待 PM 定夺。
 20. **发现：`test_20260821_164544/192759` robot_pose=0**（missed_cycles 444/3，ADS 未连上）——采集时 PLC/ADS 未就绪，非框架 bug；正式采集前需确认 PLC 开机 + ADS 可达。
+21. **ADS 复测不可达（2026-08-21）**：pyads open 报 `ADSError 1861 timeout`——PLC/ADS 链路当前未就绪，需机器人侧处理（参考 T0 修复文档）；阻塞 T14 真实回归、T16 数据验证、T5+T6。
+22. **T16 模块实现（2026-08-21，commit 35351c3）**：`src/vlgp/kinematics/`——MDH FK（4 臂，自检 12/12 PASS）+ Kabsch 基座系→镜系配准（单/多 session，自检恢复已知变换）。真实数据验证待 ADS 就绪。
 
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 

@@ -184,7 +184,13 @@
 - **受控词表先行**：任务分级制度（有哪些 task/subtask、命名规范）由 PM 与操作者先定义一版草案（写进 `task_hierarchy.yaml` + 备忘），GUI 按词表渲染选择器，不允许自由文本，保证标注一致性。
 - 建议在 T10-评审之后实施（工具稳定性已确认再扩功能）。
 
-### T16. 基于 MDH 的运动学验证与基座系→镜系变换解算（新立项 2026-08-20）
+### T16. 基于 MDH 的运动学验证与基座系→镜系变换解算（2026-08-21 模块实现完成，数据验证待 ADS）
+
+**已完成（commit 35351c3，`src/vlgp/kinematics/`）**：
+- **MDH FK**：4 臂 FK 实现（13 链节 j3..jaw，Modified DH，从 `tech_repo/MDH参数表.md` 转写），自检 12/12 PASS（正交/确定性/有限值，零位姿 arm1≈[591,202,1425]mm）。
+- **Kabsch 基座系→镜系**：`transform.py` 单 session 解算 + 多 session 交叉验证（验收线旋转<1°/平移<5mm/RMS 报告）；合成数据自检恢复已知变换（旋转 0.005°、平移 0.04mm）。
+- **前置核对**：SRT delta 旋转约定（`q_t⁻¹⊗q_{t+1}` frame-invariant；当前实现 `R1@R0^T` 非）已汇报，待 PM 定夺是否改动。
+- **待 ADS 就绪**：① FK 复算 vs PLC 输出误差报告 + 关节 3–15↔CSV joint_1..12 映射确认；② R_bs/t_bs 多 session 一致性；③ `delta_rot_6d` 改造（若 PM 批准）。
 
 背景：工程师提供了四条臂的 MDH 参数表（`tech_repo/MDH参数表.md`， joints 3–15 + jaw 固定段，长度 mm、角度 deg，`theta` 常值项为关节零位偏置）。这带来两条不依赖现场标定的数据侧路线：
 
