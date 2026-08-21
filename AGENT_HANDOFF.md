@@ -1,9 +1,6 @@
 # AGENT 任务交接：开始采集标注/训练数据前的就绪工作
 
-> 创建日期：2026-08-16；最近更新：2026-08-19（执行 Agent：T12+T13 完成，详见任务状态；剩余 T5+T6 ⏸️ / T7-现场 / T9-跟进 / T10-实机评审）。
-> 2026-08-20 更新：T9 工程师答复已回收（Q1=基坐标系），T9-跟进关闭；新增 T14（instrument_type 透传）；T7-现场扩展手眼标定内容。
-> 2026-08-20 更新 2：新增 T15（片段级任务层级与指令标注，SRT-H 语义层），详见任务清单。
-> 2026-08-20 更新 3：收到工程师 MDH 参数表（`tech_repo/MDH参数表.md`），新增 T16（FK 验证 + 基座系→镜系变换离线解算），T7-现场的相机手眼标定降级为交叉验证。
+> 创建日期：2026-08-16；最近更新：2026-08-21（执行 Agent：T14 完成；T16 前置核对完成（结论见任务清单）；发现 robot_pose=0 新 session 需正式采集前排查；剩余 T5+T6 / T7-现场 / T10-评审 / T15 / T16）。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -90,18 +87,25 @@
 - 附带收获：TwinCAT 数据含 `instrument_type` 逐样本字段，对照表见 `tech_repo/器械编码对照表.md`（0=无器械，1=大号持针钳 … 13=内窥镜）→ 派生 **T14**。
 - **2026-08-20 补充**：工程师另提供四臂 MDH 参数表（`tech_repo/MDH参数表.md`），坐标系转换可改走数据侧解析路线 → 派生 **T16**（FK 验证 + Kabsch 解算基座系→镜系变换），相机手眼标定降级为交叉验证。
 
-### T14. instrument_type 透传进数据集与元数据（新立项 2026-08-20）
+### T14. instrument_type 透传进数据集与元数据 ✅（2026-08-21 完成，commit fbc9a6f）
 
-背景：TwinCAT CSV 已含 `instrument_type`（每臂每样本的器械类型编号），对照表在 `tech_repo/器械编码对照表.md`。SRT-H 式数据集中器械身份是重要条件信息，应在数据构建阶段带入，避免后期回填。
+- `build_srth_dataset.py`：从对齐表读取每臂 `instrument_type`（episode 区间众数），写入 `meta.json['instruments']`（`{armN: {present, id, name, all_ids, all_names, swapped_within_episode}}`）；编号→名称对照表内置于代码（来源 `tech_repo/器械编码对照表.md` 2026-08-20）；超出对照表落 raw id + `unknown-N` 标签并告警，不中断构建；episode 内换器械（多编号）打印告警并记入 meta。
+- `write_session_meta.py`：可选预填 `instruments`（采集时已知可手填；构建时以 TwinCAT 实测值为准）。
+- **验证**：当前可用 session 无 robot_pose 数据（见下「robot_pose=0 发现」），改用合成对齐表验证——arm1=4→圆头抓取钳 ✅、arm2=13→内窥镜 ✅、unknown-999/NaN 安全 ✅、单元自检 6/6 PASS。
+- **遗留**：真实 session 端到端回归待 PLC/ADS 就绪后补（届时重新构建一条含器械的 episode 核对 meta）。
 
-任务内容：
+### T16 前置核对（2026-08-21 完成，结论汇报）
 
-1. `build_srth_dataset.py`：从对齐后的 TwinCAT 数据读取每条臂的 `instrument_type`（取 episode 区间众数/首帧值， episode 内换器械属异常情况，检测到时在 meta 中记录警告），写入 episode `meta.json`（如 `instruments: {"psm1": {"id": 4, "name": "圆头抓取钳"}, ...}`，键名与现有臂命名约定一致）。
-2. 编号→名称解码表放入代码侧常量（对照 `tech_repo/器械编码对照表.md`，注明来源与日期），meta 中同时落 id 与中文名，避免下游依赖外部文档。
-3. `write_session_meta.py`：可选地在 `session_meta.json` 模板中预留/回填器械信息入口（若采集时已知可手工预填，构建时以 TwinCAT 实测值为准）。
-4. 用 `sessions/test_20260818_215014` 回归验证：该 session arm1 instrument_type=4，episode meta 应解出「圆头抓取钳」。
+按 PM 调研要求，先核对 `build_srth_dataset.py` 的 `delta_rot_6d` 约定，**结论**：
 
-验收：episode `meta.json` 含每臂器械 id+名称；器械编号超出对照表范围时落原始 id 并给警告，不中断构建；现有构建流程无回归。
+- SRT hybrid 约定的 delta 旋转 = **当前末端系相对旋转** `q_t⁻¹ ⊗ q_{t+1}`：数学验证 **frame-invariant**（与基座系/镜系选择无关）——若采用，T9 遗留风险**直接消解**。
+- **当前实现**为 `q_1 ⊗ q_0⁻¹`（`R1 @ R0^T`，世界系相对旋转）：**非 frame-invariant**（随姿态变化的轴误差，正是 T9 报告的问题）。
+- 按 PM 立场（SRT 无标定、delta 用局部系约定即可），当前实现**不阻塞 T5/T6 与正式采集**。
+- **待 PM 定夺**：是否在 T16 实施时将 `delta_rot_6d` 改为 `q_t⁻¹ ⊗ q_{t+1}`（改动影响训练数据语义与既有 episode，需确认后再动）。
+
+### 发现：robot_pose=0 的新 session（2026-08-21，正式采集前需排查）
+
+`test_20260821_164544`（37 min）/ `test_20260821_192759` 的 `samples_read=0`、`missed_cycles=444/3`——TwinCAT ADS 连接从未成功。**非框架 bug**（worker 正常启动、`worker_exit_codes={}`），疑似采集时 PLC/ADS 链路未就绪。**正式采集前必须确认 PLC 开机 + ADS 可达**（检查步骤见 `VLGP_TwinCAT_ADS链路修复说明_20260817.md`）。
 
 ### T10-评审. 数据清洗/裁剪 GUI — 实机完整评审（实现已完成 ✅，待桌面操作）
 
