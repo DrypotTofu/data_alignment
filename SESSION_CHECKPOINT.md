@@ -34,6 +34,7 @@
 19. **T16 前置核对（2026-08-21）**：SRT 约定 `q_t⁻¹⊗q_{t+1}` frame-invariant（消解 T9）；当前实现 `R1@R0^T` 非 frame-invariant。不阻塞采集；改约定待 PM 定夺。
 20. **发现：`test_20260821_164544/192759` robot_pose=0**（missed_cycles 444/3，ADS 未连上）——采集时 PLC/ADS 未就绪，非框架 bug；正式采集前需确认 PLC 开机 + ADS 可达。
 21. **ADS 复测不可达（2026-08-21）**：pyads open 报 `ADSError 1861 timeout`——PLC/ADS 链路当前未就绪，需机器人侧处理（参考 T0 修复文档）；阻塞 T14 真实回归、T16 数据验证、T5+T6。
+22. **ADS 诊断结论（2026-08-21）**：192.168.22.22 的 48898 端口不可达 + ping 无响应 → **机器人控制器当前不在线（未开机/网络断开）**，本机 StaticRoutes.xml 完好（RobotController 路由在）。属机器人侧硬件问题，需用户/工程师开机处理。
 22. **T16 模块实现（2026-08-21，commit 35351c3）**：`src/vlgp/kinematics/`——MDH FK（4 臂，自检 12/12 PASS）+ Kabsch 基座系→镜系配准（单/多 session，自检恢复已知变换）。真实数据验证待 ADS 就绪。
 
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
