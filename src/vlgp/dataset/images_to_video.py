@@ -68,6 +68,8 @@ def images_to_video(
     fps: float | None,
     codec: str,
     timestamp_overlay: bool,
+    start_sec: float | None = None,
+    end_sec: float | None = None,
 ) -> None:
     metadata_path = input_dir / 'metadata.csv'
     if not metadata_path.exists():
@@ -81,6 +83,20 @@ def images_to_video(
 
     # Sort by index to ensure correct frame order.
     rows.sort(key=lambda r: int(r['index']))
+
+    # Optional segment selection: seconds relative to the first frame.
+    if start_sec is not None or end_sec is not None:
+        t0 = int(rows[0]['timestamp_ns'])
+        lo = t0 + int(start_sec * 1e9) if start_sec is not None else None
+        hi = t0 + int(end_sec * 1e9) if end_sec is not None else None
+        rows = [r for r in rows
+                if (lo is None or int(r['timestamp_ns']) >= lo)
+                and (hi is None or int(r['timestamp_ns']) <= hi)]
+        if not rows:
+            raise ValueError(
+                f'Segment [{start_sec}, {end_sec}] s selects no frames in {input_dir}')
+        logger.info('Segment [%s, %s] s -> %d frames (idx %s..%s)',
+                    start_sec, end_sec, len(rows), rows[0]['index'], rows[-1]['index'])
 
     if fps is None:
         fps = compute_average_fps(rows)
@@ -130,6 +146,10 @@ def main() -> int:
                         help='FourCC codec (default: mp4v; try MJPG for AVI)')
     parser.add_argument('--timestamp-overlay', action='store_true',
                         help='Burn Beijing timestamps into each frame')
+    parser.add_argument('--start-sec', type=float, default=None,
+                        help='Segment start in seconds relative to first frame')
+    parser.add_argument('--end-sec', type=float, default=None,
+                        help='Segment end in seconds relative to first frame')
     args = parser.parse_args()
 
     images_to_video(
@@ -138,6 +158,8 @@ def main() -> int:
         fps=args.fps,
         codec=args.codec,
         timestamp_overlay=args.timestamp_overlay,
+        start_sec=args.start_sec,
+        end_sec=args.end_sec,
     )
     return 0
 
