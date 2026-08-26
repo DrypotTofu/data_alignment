@@ -49,6 +49,8 @@
 
 29. **T15 v0 播放速度 + 运动量曲线打磨（2026-08-26）**：① 速度选择器 0.5x/1x/2x/4x，改为基于时间的行推进（`accum += dt×speed×30`，同 PyQt5 `_tick`），J/K/L 跳`max(1,speed×5)` 帧；② 曲线逐线各自最大值归一 + 图例 + IN/OUT 虚线标记 + 白色当前行标记；`/alignment` 增 `points` 参数（自适应降采样，长 session 轻量），NaN 行已清洗。剩余：多 session 顺序评审整体回归。
 
+30. **T15 v0 整体回归通过（2026-08-26，`scripts/test/verification/web_regression.py` 37/37 PASS）**：会话发现/运动量/帧服务/annotations 往返+ 7 类 422 校验/四场景逐字节一致（approved/rejected/pending/含 segments）/评审队列顺序流程（评审→队列收缩→全审→队列空，manifest 逐字节一致）/task-hierarchy/index/openapi。顺带修复：① `review_queue` 只收含对齐表会话（对齐 PyQt5 `collect_sessions`）；② segments 行号越界校验。测试产物自动还原。**v0 功能基线完成**；下一步：词表语义定稿后进 v1 片段标注 UI。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。
