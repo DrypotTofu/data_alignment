@@ -3,6 +3,7 @@
 > 创建日期：2026-08-16；最近更新：2026-08-26（执行 Agent：T14 真实数据回归完成（instruments=内窥镜）；T16 delta_rot_6d 局部系改造完成 + 真实数据验证启动（FK/Kabsch 待单关节运动）；剩余 T5+T6 / T7-现场 / T10-评审 / T15 / T16（部分））。
 > 2026-08-23 PM 更新：① T15 定稿 Web 架构（FastAPI + JS 前端），v0 先迁移 T10 裁剪功能进 Web 平台（迁移完成前 PyQt5 版继续可用）；② PM 决策：`delta_rot_6d` 改为 SRT 局部系约定（见 T16 决策注记）。
 > 2026-08-26 PM 更新：图像工程师答复——内窥镜畸变由主机内置矫正（出厂标定存镜头 EEPROM），T7-现场标定范围收缩为腕部双相机；内窥镜双目两路输出可行性待现场确认。
+> 2026-08-26 PM 更新 2：数据集格式决策——采用 **LeRobotDataset v3.0** 规范，新增 T17（格式对齐与导出器）；内窥镜双目两路可同时输出已确认（见 T7-现场）。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -196,6 +197,7 @@
 - **Web 平台后端骨架已落地（2026-08-26，commit 19acf55 + 0e9d0bf）**：`src/vlgp/web/`（FastAPI）——`/api/sessions`（列表/详情）、`/api/sessions/{name}/alignment`（运动量曲线，`?stride=`）、`/api/sessions/{name}/frames/{cam}/{row}?max_width=`（JPEG 预览，缓存）+ `POST .../frames/batch`（base64 预取窗）、`GET/PUT .../annotations`（读/校验/原子写，校验含 trim 越界与 T15 片段词表校验）、`/api/task-hierarchy`、`/api/review/queue` + `/api/review/manifest`（批量评审队列）；静态前端 `web/static/`（会话列表 + 三路 canvas 帧视图 + 运动量条点击跳转 + 播放/逐帧 + IN/OUT + approved/rejected/pending + 保存 + 下一个未评审（N 键）+ J/K/L 快进快退，快捷键同 PyQt5 版）；启动 `python -m vlgp.web.app`（默认 127.0.0.1:8765）或 `start_web_platform.bat`。
 - **v0 对齐完成项（2026-08-26）**：① **annotations.json 与 PyQt5 版逐字节一致**——PUT 时服务端按 PyQt5 同格式补 `reviewed_by`（USERNAME）与 `reviewed_at`（本地时区 ISO 秒级），manifest 更新同构；实测 262 字节完全一致 ✅；② 评审队列/清单：`/api/review/queue`（manifest status 非 approved/rejected 即待审，同 PyQt5 `review_manifest.json` 语义）+ 前端「下一个」（N 键）；③ J/K/L 快进快退对齐；④ **播放速度与运动量曲线打磨**（2026-08-26）：速度选择器 0.5x/1x/2x/4x + **基于时间的行推进**（`dt×speed×30`，同 PyQt5 `_tick`），J/K/L 跳 `max(1,speed×5)` 帧；曲线**逐线各自最大值归一**（同 PyQt5 `_redraw_curve` 口径）+ 图例 + IN/OUT 虚线标记 + 白色当前行标记；`/alignment` 增 `points` 参数（按像素预算自适应降采样，长 session 轻量；NaN 行已清洗）。
 - **✅ v0 整体回归通过（2026-08-26，`scripts/test/verification/web_regression.py`，37/37 PASS）**：A 会话发现/详情（含 404）→ B 运动量数据（points/stride/NaN 清洗）→ C 帧服务（单帧 JPEG 魔数、超小图、越界 404、batch、空 rows）→ D annotations 往返 + 7 类 422 校验 + **approved/rejected/pending 与含 segments 四种场景逐字节一致** → E 评审队列顺序流程（评审→队列收缩→全审→队列空；manifest 逐字节一致）→ F task-hierarchy/index/openapi。回归同时修复两处：① `review_queue` 只收**含对齐表**会话（对齐 PyQt5 `collect_sessions`，否则无对齐表会话永远滞留队列）；② **segments 行号越界校验**（此前只查 trim 不查 segments）。测试产物自动还原。**v0 剩余**：无（功能基线已对齐；GUI 实机浏览体验建议后续人工过一遍）。
+- **Web 平台自动对齐生成（2026-08-26，用户需求）**：选中**未生成对齐表**的 session 时自动生成——`POST /api/sessions/{name}/align`（新增 `vlgp/web/align_service.py`，复用 CLI 同款 `build_camera_anchor_alignment`：漂移模型→相机时间映射→30Hz 锚点网格→写 `camera_anchor_alignment.csv`+`_valid.csv`，**与 CLI 产出一致**（实测 932 行逐字节一致））；幂等（已对齐返回 `already_aligned`）；无机器人数据返回 422（中文提示「采集时 PLC/ADS 链路可能未就绪」）；前端选中未对齐会话时显示「正在生成对齐轴…」并自动触发，列表加「未对齐」徽标。回归新增 G 节（幂等/404/422），**40/40 PASS**。注意：对齐计算在线程池执行，长 session 数十秒内完成。
 - **依赖注记（已解除）**：本机 Smart App Control 曾按信誉阻止 conda-forge 的 `pyexpat.pyd`（`应用程序控制策略已阻止此文件`）导致 env 内 pip 不可用；**用户已关闭 SAC（VerifiedAndReputablePolicyState=0）**，pyexpat/pip 恢复正常，fastapi/uvicorn 已用 pip 正式重装（`pip check` 通过）。
 - ~~建议在 T10-评审之后实施~~（2026-08-23 修订：T15 改为 Web 平台承载 T10 功能，不再依赖 PyQt5 版评审完成；T10-评审仍建议尽早做，其验收结论直接作为 v0 迁移的功能基线）。
 
@@ -226,6 +228,30 @@
 注意：MDH 单位与坐标轴定义（mm/deg、Modified DH 的变换顺序 `Rx(alpha)·Tx(a)·Rz(theta)·Tz(d)`）以实现时与 PLC 输出对齐为准；`alpha` 列出现 16°、-50°/-60° 等非直角落差是结构安装角，照表使用不要「修正」。
 
 > **SRT 论文立场调研（PM，2026-08-21）**：SRT（2407.12998）全文**无任何标定环节**（"calibration" 零出现），且明确假设数据**未做手眼标定**采集（对齐临床大规模数据场景），改用 relative action 对不准的绝对运动学免疫：delta 平移定义在**内窥镜末端系**、delta 旋转定义在**当前末端执行器系**（"hybrid relative actions"）。推论：① 本任务（R_bs 解算）是**数据质量增强项而非对齐 SRT 的必要步骤**，优先级下调，不阻塞 T5/T6 与正式采集；② **优先核对项**：`build_srth_dataset.py` 的 `delta_rot_6d` 若算的是局部系相对旋转（`q_t⁻¹ ⊗ q_{t+1}`，即 SRT 的末端系约定），则与基座/镜系常值旋转无关，T9 遗留风险直接消解——实施 T16 前先核对此约定并与 SRT hybrid 形式对齐。
+
+### T17. 数据集格式对齐 LeRobotDataset v3.0（新立项 2026-08-26，PM 决策）
+
+背景与决策：数据集对外/训练格式采用 **LeRobotDataset v3.0** 规范（lerobot v0.6.x 文档线）。定位：**在 `build_srth_dataset.py` 之后加一层导出器**（session → 内部 episode → LeRobot v3 数据集），不重写采集与对齐管线；SRT-H 内部 episode 格式保留为中间层（标注/裁剪语义都在这层流动）。
+
+v3.0 格式要点（2026-08-26 从 HF 官方文档 `lerobot-dataset-v3` 核对）：
+
+- **文件式存储**（v2 是每 episode 一个文件）：`data/` 为逐帧 **Parquet 分片**（一个文件含多个 episode）；`videos/` 为每相机 **MP4 分片**（同样多 episode 合一）；
+- **关系型元数据**：`meta/info.json`（schema：features/shapes/dtypes、fps、codebase 版本、路径模板）、`meta/stats.json`（全局 mean/std/min/max，归一化用）、`meta/tasks.jsonl`（自然语言任务 ↔ 整数 ID）、`meta/episodes/`（每 episode 的长度/任务/偏移，分块 Parquet）；
+- **加载侧**：`LeRobotDataset` 支持 `delta_timestamps` 时间窗采样、`StreamingLeRobotDataset` 免下载流式训练；图像增广在训练时做，**落盘图像保持原始**（与我们无损采集策略一致）；
+- 另有官方文档 `porting_datasets_v3`（v2→v3 移植脚本可参考其分片/元数据写法）。
+
+与我们字段的映射（设计起点，以实现时核定为准）：`observation.state` ← 四臂关节/末端位姿/gripper/instrument_type；`action` ← 现有 40 维 delta 动作（delta_pos + delta_rot_6d 局部系 + jaw + arm_active_mask）；`observation.images.camera_arm_{1,2,3}` ← 三路相机帧；`task`/`task_index` ← **T15 的片段指令**（天然对应 tasks.jsonl 的语言↔ID 映射）；`timestamp`/`frame_index`/`episode_index` 按规范生成；`stats.json` 在导出时全量统计。
+
+任务内容：
+
+1. **契约核定（第一步）**：pin lerobot 版本（v0.6.x 线），`pip install lerobot` 后直接读 `lerobot.datasets` 源码与 `porting_datasets_v3` 文档确定精确 schema（本机访问 HF 网页不稳，**以安装包源码为准**，不要用记忆中的格式臆造）；记录版本号与 schema 摘要到备忘。
+2. **导出器实现**：新增 `src/vlgp/dataset/export_lerobot.py`（或并入 build 流程的可选步骤）：内部 episode 目录 → LeRobot v3 目录树（parquet 分片 + mp4 分片 + meta 全套）；视频分片编码参数（编码器/CRF/GOP）参考官方文档的 video encoding 约定，**原始 PNG 序列保留不落**（mp4 有损，PNG 母版仍是源数据）。
+3. **往返验证**：用 `LeRobotDataset` 重新加载导出结果，校验帧数/时间戳/逐字段值与源 episode 一致（含三路图像抽帧像素级比对）；`delta_timestamps` 窗口采样冒烟。
+4. **多 episode 分片验证**：≥3 条 episode 合并导出，验证「多 episode 合一文件」的分片与 episodes 元数据正确。
+
+验收：导出的数据集被未修改的官方 `LeRobotDataset` 零警告加载；往返数值一致；一条完整 session（经 T10 裁剪 + T15 标注）端到端导出成功。
+
+注意：T15 的片段指令（v1 落地前）先用 session 级 `task_instruction` 占位映射 tasks.jsonl，T15 完成后切换为片段级指令。
 
 ### 里程碑达成后立即排期（非阻塞，先立项不实施）
 

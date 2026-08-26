@@ -51,6 +51,8 @@
 
 30. **T15 v0 整体回归通过（2026-08-26，`scripts/test/verification/web_regression.py` 37/37 PASS）**：会话发现/运动量/帧服务/annotations 往返+ 7 类 422 校验/四场景逐字节一致（approved/rejected/pending/含 segments）/评审队列顺序流程（评审→队列收缩→全审→队列空，manifest 逐字节一致）/task-hierarchy/index/openapi。顺带修复：① `review_queue` 只收含对齐表会话（对齐 PyQt5 `collect_sessions`）；② segments 行号越界校验。测试产物自动还原。**v0 功能基线完成**；下一步：词表语义定稿后进 v1 片段标注 UI。
 
+31. **Web 自动对齐生成（2026-08-26，用户需求）**：选中未生成对齐表的 session 时自动生成：新增 `POST /api/sessions/{name}/align`（`vlgp/web/align_service.py`，复用 CLI 同款对齐管线，与 CLI 产出逐字节一致）；幂等（已对齐返回 `already_aligned`）；无机器人数据 422（PLC/ADS 可能未就绪提示）；前端自动触发 + 「未对齐」徽标。回归新增 G 节（幂等/404/422），**40/40 PASS**。附：修复旧 uvicorn 孤儿进程占用 8765 端口问题（job 结束后确认子进程清除）。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。
