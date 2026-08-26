@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>VLGP Web Platform</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h2>会话</h2>
+      <ul id="session-list"></ul>
+    </aside>
+    <main id="main">
+      <header id="info">
+        <span id="session-name">未选择会话</span>
+        <span id="row-info"></span>
+        <span id="status-label"></span>
+      </header>
+      <section id="views">
+        <canvas id="cam-2" class="cam endoscope" width="640" height="360"></canvas>
+        <canvas id="cam-1" class="cam wrist" width="320" height="240"></canvas>
+        <canvas id="cam-3" class="cam wrist" width="320" height="240"></canvas>
+      </section>
+      <canvas id="motion" width="960" height="120"></canvas>
+      <section id="transport">
+        <input type="range" id="slider" min="0" max="0" value="0">
+        <div class="buttons">
+          <button id="btn-in" disabled>IN</button>
+          <button id="btn-out" disabled>OUT</button>
+          <button id="btn-prev">◀</button>
+          <button id="btn-play">▶</button>
+          <button id="btn-next">▶|</button>
+          <span id="trim-info"></span>
+          <select id="status" disabled>
+            <option value="pending">pending</option>
+            <option value="approved">approved</option>
+            <option value="rejected">rejected</option>
+          </select>
+          <button id="btn-save" disabled>保存</button>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
