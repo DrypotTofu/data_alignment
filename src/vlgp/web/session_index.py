@@ -209,9 +209,14 @@ class SessionIndex:
                      encoding='utf-8')
 
     def review_queue(self) -> dict:
-        """Pending sessions (manifest status not approved/rejected), PyQt5 parity."""
+        """Pending sessions (manifest status not approved/rejected), PyQt5 parity.
+
+        PyQt5's batch mode (collect_sessions) only queues sessions WITH an
+        alignment CSV — sessions without one cannot be reviewed and are
+        excluded from the queue.
+        """
         manifest = self.read_manifest()
-        sessions = self.list_sessions()
+        sessions = [s for s in self.list_sessions() if s.get('has_alignment')]
         pending = [s['name'] for s in sessions
                    if manifest.get(s['name'], {}).get('status')
                    not in ('approved', 'rejected')]

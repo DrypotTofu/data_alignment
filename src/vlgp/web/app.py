@@ -215,6 +215,11 @@ def _validate_annotations(body: AnnotationsIn, index: SessionIndex,
                 problems.append(f'trim [{s0}, {s1}] out of range [0, {n})')
     if body.segments and hier is not None:
         problems.extend(f'segments: {p}' for p in hier.validate_segments(body.segments))
+        for i, seg in enumerate(body.segments):
+            for key in ('start_row', 'end_row'):
+                v = seg.get(key)
+                if isinstance(v, int) and not (0 <= v < n):
+                    problems.append(f'segments[{i}].{key} {v} out of range [0, {n})')
     return problems
 
 
