@@ -4,8 +4,9 @@
 
 const CAMERAS = ['camera_arm_2', 'camera_arm_1', 'camera_arm_3'];
 const PREFETCH = 12;          // frames decoded ahead/behind per camera
-const STRIDE = 30;            // motion-curve stride (server side)
+const MOTION_POINTS = 2000;   // motion-curve pixel budget (server downsample)
 const MAX_W = { camera_arm_2: 640, camera_arm_1: 320, camera_arm_3: 320 };
+const CURVE_COLORS = { arm1: '#ffb43c', arm2: '#c8c8c8', arm3: '#78dc78', arm4: '#c8c8c8' };
 
 const state = {
   session: null,
@@ -13,11 +14,14 @@ const state = {
   row: 0,
   playing: false,
   playTimer: null,
+  playClock: 0,               // last performance.now() while playing
+  playAccum: 0,               // fractional row accumulator (time-based advance)
+  speed: 1,                   // 0.5 / 1 / 2 / 4
   trim: null,                 // {start_row, end_row}
   status: 'pending',
   annotations: null,
   motionRows: [],
-  motionDpos: {},             // arm -> Float array (strided)
+  motionDpos: {},             // arm -> Float array (downsampled)
 };
 
 const $ = (id) => document.getElementById(id);
@@ -78,7 +82,7 @@ async function selectSession(name) {
 }
 
 async function loadMotion() {
-  const m = await api(`/api/sessions/${state.session}/alignment?stride=${STRIDE}`);
+  const m = await api(`/api/sessions/${state.session}/alignment?points=${MOTION_POINTS}`);
   state.motionRows = m.rows;
   state.motionDpos = m.dpos || {};
   drawMotion();
@@ -90,25 +94,50 @@ function drawMotion() {
   const rows = state.motionRows;
   if (!rows.length) return;
   const arms = Object.keys(state.motionDpos);
-  const colors = { arm1: '#ffb43c', arm2: '#c8c8c8', arm3: '#78dc78', arm4: '#c8c8c8' };
-  const maxV = 5; // mm/step scale
+  // PyQt5 parity: each series normalised to its own max.
   arms.forEach((arm) => {
     const v = state.motionDpos[arm];
-    ctx.strokeStyle = colors[arm] || '#c8c8c8';
+    const mx = Math.max(...v, 1e-9);
+    ctx.strokeStyle = CURVE_COLORS[arm] || '#c8c8c8';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let i = 0; i < v.length; i++) {
       const x = (i / (v.length - 1)) * cv.width;
-      const y = cv.height - 4 - Math.min(v[i], maxV) / maxV * (cv.height - 8);
+      const y = cv.height - 6 - (v[i] / mx) * (cv.height - 14);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
   });
+  // trim IN/OUT markers
+  if (state.trim && state.nRows > 1) {
+    for (const [key, color] of [['start_row', 'rgba(120,220,120,0.9)'],
+                                 ['end_row', 'rgba(240,120,120,0.9)']]) {
+      const x = (state.trim[key] / (state.nRows - 1)) * cv.width;
+      ctx.strokeStyle = color;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cv.height); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
   // current-row marker
-  if (state.row >= 0 && rows.length > 1) {
+  if (state.row >= 0 && state.nRows > 1) {
     const x = (state.row / (state.nRows - 1)) * cv.width;
     ctx.strokeStyle = '#ffffff';
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cv.height); ctx.stroke();
+  }
+  // legend
+  const legend = [
+    ['#ffb43c', 'arm1 dpos'], ['#78dc78', 'arm3 dpos'],
+    ['#c8c8c8', 'arm2/4 dpos'], ['#7896ff', 'gripper arm1'],
+  ];
+  let lx = 8;
+  ctx.font = '11px "Microsoft YaHei", sans-serif';
+  for (const [color, label] of legend) {
+    ctx.fillStyle = color;
+    ctx.fillRect(lx, 6, 14, 3);
+    ctx.fillStyle = '#a8b4c2';
+    ctx.fillText(label, lx + 18, 11);
+    lx += 18 + ctx.measureText(label).width + 14;
   }
 }
 
@@ -212,14 +241,34 @@ function step(delta) {
   return next === state.nRows - 1;
 }
 
-function stopPlay() { clearInterval(state.playTimer); state.playTimer = null; state.playing = false; $('btn-play').textContent = '▶'; }
+// PyQt5 parity: time-based advance on the 30 Hz grid (rows += dt*speed*30),
+// so wall-clock playback tracks the selected speed regardless of timer jitter.
+function playTick() {
+  const now = performance.now();
+  const dt = (now - state.playClock) / 1000;
+  state.playClock = now;
+  state.playAccum += dt * state.speed * 30.0;
+  const stepN = Math.floor(state.playAccum);
+  if (stepN < 1) return;
+  state.playAccum -= stepN;
+  if (step(stepN)) stopPlay();
+}
+
+function stopPlay() {
+  clearInterval(state.playTimer);
+  state.playTimer = null;
+  state.playing = false;
+  $('btn-play').textContent = '▶';
+}
 
 function togglePlay() {
   if (state.playing) { stopPlay(); return; }
   if (state.row >= state.nRows - 1) state.row = 0;
   state.playing = true;
+  state.playClock = performance.now();
+  state.playAccum = 0;
   $('btn-play').textContent = '⏸';
-  state.playTimer = setInterval(() => { if (step(1)) stopPlay(); }, 66);
+  state.playTimer = setInterval(playTick, 33);
 }
 
 // ---- wire up ----
@@ -231,6 +280,7 @@ $('btn-play').onclick = togglePlay;
 $('btn-save').onclick = saveAnnotations;
 $('btn-next-session').onclick = nextSession;
 $('slider').oninput = (e) => { stopPlay(); showRow(parseInt(e.target.value, 10)); };
+$('speed').onchange = (e) => { state.speed = parseFloat(e.target.value); };
 $('status').onchange = (e) => { state.status = e.target.value; updateStatusLabel(); };
 $('motion').onclick = (e) => {
   if (!state.nRows) return;
@@ -240,10 +290,11 @@ $('motion').onclick = (e) => {
 };
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  const jump = Math.max(1, Math.round(state.speed * 5));
   if (e.key === 'ArrowLeft') step(-1);
   else if (e.key === 'ArrowRight') step(1);
-  else if (e.key === 'j' || e.key === 'J') { stopPlay(); step(-5); }
-  else if (e.key === 'l' || e.key === 'L') { stopPlay(); step(5); }
+  else if (e.key === 'j' || e.key === 'J') { stopPlay(); step(-jump); }
+  else if (e.key === 'l' || e.key === 'L') { stopPlay(); step(jump); }
   else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
   else if (e.key === '[') setTrim('in');
   else if (e.key === ']') setTrim('out');

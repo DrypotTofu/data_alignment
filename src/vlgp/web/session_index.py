@@ -126,18 +126,28 @@ class SessionIndex:
         return fname
 
     # -------------------------------------------------------------- motion
-    def motion(self, name: str, stride: int = 1) -> dict:
+    def motion(self, name: str, stride: int | None = None,
+               points: int = 2000) -> dict:
         """Compact motion-curve data (|dpos| per arm + arm1 gripper_angle).
 
         Mirrors the PyQt5 review tool: |dpos| = norm of the scope-position
         step between consecutive alignment rows; rows are the original
-        0-based alignment indices (optionally strided).
+        0-based alignment indices.
+
+        Downsampling: if ``stride`` is given it wins; otherwise a stride is
+        derived so the payload stays <= ``points`` samples per series (long
+        sessions stay light while short sessions keep full resolution).
         """
-        stride = max(1, int(stride))
         df = self.alignment(name)
-        rows = np.arange(0, len(df), stride)
+        n = len(df)
+        if stride is None:
+            stride = max(1, int(np.ceil(n / max(1, int(points)))))
+        else:
+            stride = max(1, int(stride))
+        rows = np.arange(0, n, stride)
         payload: dict = {
-            'n_rows': int(len(df)),
+            'n_rows': n,
+            'stride': stride,
             'rows': rows.tolist(),
             'dpos': {},
             'gripper': {},
@@ -149,16 +159,20 @@ class SessionIndex:
             dx = df[f'arm{a}_scope_position_x'].to_numpy(dtype=float)
             dy = df[f'arm{a}_scope_position_y'].to_numpy(dtype=float)
             dz = df[f'arm{a}_scope_position_z'].to_numpy(dtype=float)
-            d = np.zeros(len(df))
+            d = np.zeros(n)
             d[1:] = np.sqrt((dx[1:] - dx[:-1]) ** 2
                             + (dy[1:] - dy[:-1]) ** 2
                             + (dz[1:] - dz[:-1]) ** 2)
+            # rows without valid pose carry NaN scope positions -> sanitise
+            # (PyQt5 _redraw_curve uses nan_to_num as well); NaN breaks JSON.
+            d = np.nan_to_num(d, nan=0.0, posinf=0.0, neginf=0.0)
             payload['dpos'][f'arm{a}'] = np.round(d[rows], 4).tolist()
         for a in (1,):
             col = f'arm{a}_gripper_angle'
             if col in df.columns:
-                payload['gripper'][f'arm{a}'] = np.round(
-                    df[col].to_numpy(dtype=float)[rows], 3).tolist()
+                g = np.nan_to_num(df[col].to_numpy(dtype=float),
+                                  nan=0.0, posinf=0.0, neginf=0.0)
+                payload['gripper'][f'arm{a}'] = np.round(g[rows], 3).tolist()
         return payload
 
     # --------------------------------------------------------- annotations

@@ -86,9 +86,9 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
 
     # ------------------------------------------------------------ alignment
     @app.get('/api/sessions/{name}/alignment')
-    def alignment(name: str, stride: int = 1):
+    def alignment(name: str, stride: int | None = None, points: int = 2000):
         try:
-            return index.motion(name, stride)
+            return index.motion(name, stride, points)
         except (SessionNotFound, NoAlignment) as e:
             raise HTTPException(404, str(e))
 
