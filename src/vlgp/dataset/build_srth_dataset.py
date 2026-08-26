@@ -12,7 +12,9 @@ anchor frame + three synchronised images + a future 60-step (2 s @ 30 Hz)
 Action space (per arm, 4 arms -> 40 dims, SRT-H style):
     delta_pos      3   scope-frame (``scope_position_*``) position delta
     delta_rot_6d   6   first two columns of the relative rotation matrix
-                        R_rel = R(q_{i+1}) @ R(q_i)^T, stored as [g1; g2]
+                        R_rel = R(q_i)^T @ R(q_{i+1})  (= q_i^-1 x q_{i+1},
+                        expressed in the current end-effector frame, SRT's
+                        hybrid-relative-action convention), stored as [g1; g2]
                         (Zhou et al. 2019 convention: flat [R00,R10,R20,R01,R11,R21])
     jaw            1   ``gripper_angle`` normalised to [0, 1]
 plus a per-arm boolean ``arm_active_mask`` (heuristic, see below).
@@ -27,11 +29,12 @@ Coordinate / quaternion facts (confirmed 2026-08-16):
     before being handed to ``scipy.spatial.transform.Rotation``.
   * The PLC publishes scope-frame *positions* only (``scope_position_*``);
     there is no scope-frame orientation symbol. ``delta_rot_6d`` is therefore
-    computed from the base-frame orientation quaternions. For small per-step
-    rotations the rotation *angle* is identical in both frames (conjugation by
-    the fixed scope<->base transform preserves angle); the *axis* differs by
-    that unknown constant rotation. This is a documented, reported limitation
-    (see ``meta.json``), not a silent coordinate fix.
+    computed from the base-frame orientation quaternions. Per PM decision
+    (2026-08-23) it uses the **SRT local-frame convention**
+    ``R_rel = R(q_i)^T @ R(q_{i+1})`` (delta rotation expressed in the
+    current end-effector frame), which is invariant under any constant
+    rotation between base and scope frame — the T9 constant-rotation concern
+    is thereby eliminated without needing ``R_bs``.
   * Base-frame poses are kept in ``actions.parquet`` and ``meta.json`` for
     workspace checks / visualisation.
 
@@ -142,21 +145,24 @@ def slerp_quat(q0_xyzw: np.ndarray, q1_xyzw: np.ndarray, t: float) -> np.ndarray
 def relative_rot_6d(q0_wxyz: np.ndarray, q1_wxyz: np.ndarray) -> np.ndarray:
     """6D action label from two consecutive PLC quaternions (wxyz).
 
-    R_rel = R(q1) @ R(q0)^T; return the first two columns concatenated as
-    [g1; g2] with g1 = R[:, 0], g2 = R[:, 1] (Zhou et al. 2019 convention),
-    i.e. flat [R00, R10, R20, R01, R11, R21].
+    R_rel = R(q0)^T @ R(q1)  (= q0^-1 x q1, delta rotation expressed in the
+    current end-effector frame, SRT hybrid-relative-action convention; PM
+    decision 2026-08-23). Frame-invariant under constant base<->scope
+    rotations. Returns the first two columns concatenated as [g1; g2] with
+    g1 = R[:, 0], g2 = R[:, 1] (Zhou et al. 2019 convention), i.e. flat
+    [R00, R10, R20, R01, R11, R21].
     """
     r0 = rotation_matrix(wxyz_to_xyzw(q0_wxyz))
     r1 = rotation_matrix(wxyz_to_xyzw(q1_wxyz))
-    rel = r1 @ r0.T
+    rel = r0.T @ r1
     return np.concatenate([rel[:, 0], rel[:, 1]])
 
 
 def rotation_angle_deg(q0_wxyz: np.ndarray, q1_wxyz: np.ndarray) -> float:
-    """Angle of the relative rotation R(q1) @ R(q0)^T, in degrees."""
+    """Angle of the relative rotation R(q0)^T @ R(q1), in degrees."""
     r0 = rotation_matrix(wxyz_to_xyzw(q0_wxyz))
     r1 = rotation_matrix(wxyz_to_xyzw(q1_wxyz))
-    rel = r1 @ r0.T
+    rel = r0.T @ r1
     cos_theta = float(np.clip((np.trace(rel) - 1.0) / 2.0, -1.0, 1.0))
     return float(np.degrees(np.arccos(cos_theta)))
 
@@ -194,17 +200,37 @@ def run_self_tests() -> dict:
     _assert_close('slerp_half_45deg', half, want_half)
     results['slerp_half_45deg'] = 'PASS'
 
-    # 5. Relative rotation: from +90deg-Z to identity == -90deg about Z
-    rel = rotation_matrix([0.0, 0.0, 0.0, 1.0]) @ rotation_matrix([0.0, 0.0, s2, s2]).T
-    _assert_close('relative_rot_-90deg', rel, want_rz90.T)
+    # 5. Relative rotation (SRT local-frame convention R0^T @ R1):
+    #    from identity to +90deg-Z == +90deg about Z.
+    rel = rotation_matrix([0.0, 0.0, 0.0, 1.0]).T @ rotation_matrix([0.0, 0.0, s2, s2])
+    _assert_close('relative_rot_+90deg', rel, want_rz90)
     results['relative_rotation'] = 'PASS'
 
-    # 6. relative_rot_6d on a known pair (wxyz input): R(-90deg about Z)
+    # 6. relative_rot_6d on a known pair (wxyz input): from +90deg-Z to
+    #    identity == -90deg about Z (Rz90^T @ I = Rz(-90)).
     six = relative_rot_6d(np.array([s2, 0.0, 0.0, s2]), np.array([1.0, 0.0, 0.0, 0.0]))
     want_rel = want_rz90.T  # -90 deg about Z
     want_six = np.concatenate([want_rel[:, 0], want_rel[:, 1]])  # [g1; g2]
     _assert_close('relative_rot_6d_known', six, want_six)
     results['relative_rot_6d'] = 'PASS'
+
+    # 7. Discriminating test: both quats non-identity. q0=+90deg-Z,
+    #    q1=+90deg-X. New convention R0^T @ R1 = Rz90^T @ Rx90 must differ
+    #    from the old R1 @ R0^T = Rx90 @ Rz90^T (non-commuting rotations).
+    q0 = np.array([s2, 0.0, 0.0, s2])   # wxyz +90deg about Z
+    q1 = np.array([s2, s2, 0.0, 0.0])   # wxyz +90deg about X
+    r0 = rotation_matrix(wxyz_to_xyzw(q0))
+    r1 = rotation_matrix(wxyz_to_xyzw(q1))
+    want_new = r0.T @ r1
+    want_old = r1 @ r0.T
+    six_new = relative_rot_6d(q0, q1)
+    _assert_close('local_frame_6d', six_new,
+                  np.concatenate([want_new[:, 0], want_new[:, 1]]))
+    if np.allclose(want_new, want_old):
+        raise AssertionError(
+            'self-test FAILED: local-frame and old conventions coincide '
+            '(non-commuting check broken)')
+    results['local_frame_convention'] = 'PASS'
 
     return results
 
@@ -218,7 +244,7 @@ def compute_actions(align: pd.DataFrame) -> pd.DataFrame:
 
     Row i carries the transition from state i to state i+1:
       delta_pos    = scope_pos[i+1] - scope_pos[i]          (scope frame, mm)
-      delta_rot_6d = first two columns of R(q[i+1]) @ R(q[i])^T
+      delta_rot_6d = first two columns of R(q[i])^T @ R(q[i+1])  (local frame)
       jaw          = normalised gripper_angle at i+1
     The last row (no successor) is dropped.
     """
@@ -583,10 +609,10 @@ def main() -> int:
         'alignment_errors_ms': cam_err,
         'coordinate_notes': {
             'delta_pos_frame': 'scope frame (scope_position_*), mm',
-            'delta_rot_frame': ('base-frame orientation quaternions (PLC exposes scope '
-                                'positions only); for small steps the rotation angle is '
-                                'frame-invariant, the axis differs by the uncalibrated '
-                                'scope<->base rotation — reported limitation, not fixed'),
+            'delta_rot_frame': ('current end-effector frame, SRT local-frame convention '
+                                'R_rel = R(q_i)^T @ R(q_{i+1}) = q_i^-1 x q_{i+1}; '
+                                'frame-invariant under constant base<->scope rotation '
+                                '(PM decision 2026-08-23)'),
             'quaternion_order': 'PLC wxyz -> reordered to xyzw for scipy',
             'jaw_normalisation': {'lo': args.jaw_lo, 'hi': args.jaw_hi,
                                   'invert': args.jaw_invert,
