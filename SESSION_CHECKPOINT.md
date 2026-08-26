@@ -41,6 +41,8 @@
 24. **T16 delta_rot_6d 局部系改造（2026-08-26，commit a2bf3d0）**：按 PM 2026-08-23 决策改为 `R_rel=R(q_i)^T@R(q_{i+1})`（SRT hybrid 约定）；自检 7/7 PASS；静止段回归 median 旋转角 0.000 mdeg（尾部 ~0.05° 为 PLC 四元数量化 ~1e-4 噪声）；新旧约定共轭关系 `R0^T*old*R0=new` 精确到 7.77e-16。
 25. **T16 真实数据验证启动（2026-08-26，commit a2bf3d0/f115dc5）**：新增 `vlgp/kinematics/validate.py` + `validate_kinematics.bat`（报告 `sessions/20260821_123455/t16_validation.json`）；FK vs PLC 全部映射假设失败（4 行映射 + 6144 符号组合 0 命中）→ 需单关节运动实验；Kabsch 单一刚体变换不成立（RMS 68.95mm）→ 疑逐臂安装基座；结论与协议见 `tech_repo/T16_FK与PLC对标验证_20260821.md`。
 
+26. **T15 受控词表占位符版落地 + 框架模块（2026-08-26，用户指示先搭框架）**：① `scripts/config/task_hierarchy.yaml`（v0.1，`status: placeholder`）——task=触针/抓取/缝合/待机 × subtask + 指令模板，包含 `segments` schema 契约与定稿 TODO 清单；② 新增 `src/vlgp/annotations/` 包 + `task_hierarchy.py`（加载/结构校验、路径与片段校验、自检 CLI，自检全 PASS）。词条语义待 PM/操作者定稿，不阻塞 Web 平台 v0/v1 框架搭建。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。

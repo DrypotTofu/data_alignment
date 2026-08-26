@@ -187,6 +187,7 @@
 
 依赖与前置：
 - **受控词表先行**：任务分级制度（有哪些 task/subtask、命名规范）由 PM 与操作者先定义一版草案（写进 `task_hierarchy.yaml` + 备忘），GUI 按词表渲染选择器，不允许自由文本，保证标注一致性。
+- **占位符版词表已落地（2026-08-26）**：`scripts/config/task_hierarchy.yaml`（v0.1，`status: placeholder`，task=触针/抓取/缝合/待机 × subtask + 指令模板，含 schema 契约注释与定稿 TODO 清单）；配套框架模块 `vlgp/annotations/task_hierarchy.py`（加载/结构校验/路径与片段校验/自检 CLI `python -m vlgp.annotations.task_hierarchy`，自检全 PASS）。**词条语义待 PM/操作者定稿后升 `status: draft/finalized`（YAML 内 notes 列了 5 项待定事项）**；框架可在占位词表上先行搭建。
 - ~~建议在 T10-评审之后实施~~（2026-08-23 修订：T15 改为 Web 平台承载 T10 功能，不再依赖 PyQt5 版评审完成；T10-评审仍建议尽早做，其验收结论直接作为 v0 迁移的功能基线）。
 
 ### T16. 基于 MDH 的运动学验证与基座系→镜系变换解算（2026-08-21 模块实现；2026-08-21 delta_rot_6d 改造完成；FK/Kabsch 数据验证待单关节运动）
