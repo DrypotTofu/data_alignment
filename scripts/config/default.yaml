@@ -77,7 +77,7 @@ sources:
   backend: dshow
   image_format: png
   writer_threads: 2
-  exposure: -6
+  exposure: -5
   wb_temperature: 5000
   auto_wb: 1
   brightness: 36
@@ -95,7 +95,7 @@ sources:
   fourcc: MJPG
   backend: dshow
   image_format: png
-  exposure: -6
+  exposure: -5
   wb_temperature: 4300
   auto_wb: 1
   brightness: 36
