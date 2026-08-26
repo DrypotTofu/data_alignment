@@ -39,10 +39,29 @@ async function loadSessions() {
   for (const s of sessions) {
     const li = document.createElement('li');
     const ann = s.annotations || {};
-    li.innerHTML = `${s.name}<span class="sub">${s.n_rows} 行 · ${ann.status || 'pending'}` +
+    const badge = s.has_alignment ? '' : '<span class="badge">未对齐</span>';
+    li.innerHTML = `${s.name}${badge}<span class="sub">${s.n_rows} 行 · ${ann.status || 'pending'}` +
       (ann.trim ? ` · [${ann.trim.start_row}, ${ann.trim.end_row}]` : '') + '</span>';
     li.onclick = () => selectSession(s.name);
     ul.appendChild(li);
+  }
+}
+
+// Generate the camera-anchor alignment table on first open of an unaligned
+// session (server runs the same pipeline as align_camera_anchor).
+async function ensureAligned(name) {
+  const msg = $('align-status');
+  msg.textContent = '正在生成对齐轴（首次打开未对齐会话，自动对齐中，请稍候）…';
+  try {
+    const r = await fetch(`/api/sessions/${name}/align`, { method: 'POST' });
+    const body = await r.json();
+    if (!r.ok) throw new Error((body && body.error) || `${r.status} ${r.statusText}`);
+    msg.textContent = body.status === 'already_aligned'
+      ? '' : `对齐完成：${body.n_rows} 行 (${body.elapsed_s}s)`;
+    return body;
+  } finally {
+    // keep the completion message for a moment, then clear
+    setTimeout(() => { if (!state.playing) msg.textContent = ''; }, 4000);
   }
 }
 
@@ -52,8 +71,12 @@ async function selectSession(name) {
   state.playing = false;
   stopPlay();
   try {
-    const info = await api(`/api/sessions/${name}`);
-    if (!info.n_rows) throw new Error('该会话无对齐表 (未运行 align_camera_anchor)');
+    let info = await api(`/api/sessions/${name}`);
+    if (!info.n_rows) {
+      await ensureAligned(name);                       // on-demand alignment
+      info = await api(`/api/sessions/${name}`);
+      if (!info.n_rows) throw new Error('对齐生成后仍无可用的对齐表');
+    }
     state.nRows = info.n_rows;
     state.annotations = info.annotations || {};
     state.trim = state.annotations.trim || null;
@@ -71,6 +94,7 @@ async function selectSession(name) {
     updateStatusLabel();
     updateTrimInfo();
     await showRow(0);
+    loadSessions();                                    // refresh badge
   } catch (err) {
     alert('无法打开会话: ' + err.message);
     state.session = null;

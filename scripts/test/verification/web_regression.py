@@ -66,7 +66,7 @@ def _req(method: str, base: str, path: str, payload=None) -> tuple[int, dict | b
 
 
 def get(base, path): return _req('GET', base, path)
-def post(base, path, payload): return _req('POST', base, path, payload)
+def post(base, path, payload=None): return _req('POST', base, path, payload)
 def put(base, path, payload): return _req('PUT', base, path, payload)
 
 
@@ -273,6 +273,21 @@ def main() -> int:
     check('index html', s == 200 and b'VLGP' in raw)
     s, raw, _ = get(base, '/openapi.json')
     check('openapi', s == 200)
+
+    # ------------------------------------------ G. on-demand alignment (safe subset)
+    section(base, 'G. on-demand alignment (POST /align)')
+    s, body, _ = post(base, f'/api/sessions/{session}/align')
+    check('already-aligned idempotent', s == 200 and body.get('status') == 'already_aligned'
+          and body.get('n_rows') == body.get('n_rows', 0) > 0, str(body.get('status')))
+    s, body, _ = post(base, '/api/sessions/no_such_session_xyz/align')
+    check('align unknown session 404', s == 404)
+    if noalign:
+        s, body, _ = post(base, f'/api/sessions/{noalign}/align')
+        detail = body.get('detail') if isinstance(body, dict) else None
+        ok = s == 422 and isinstance(detail, dict) and 'error' in detail
+        check('align no-robot-data 422', ok, str(body)[:80])
+    # note: full generation path (unaligned -> generated, byte-identical to
+    # the CLI) is exercised manually; it requires moving session data.
 
     # ------------------------------------------------------------ cleanup
     if not args.keep:

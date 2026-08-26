@@ -125,6 +125,10 @@ class SessionIndex:
             raise ValueError(f'unsafe filename {fname!r}')
         return fname
 
+    def invalidate(self, name: str) -> None:
+        """Drop cached alignment data for one session (after regeneration)."""
+        self._align_cache.pop(_safe_name(name), None)
+
     # -------------------------------------------------------------- motion
     def motion(self, name: str, stride: int | None = None,
                points: int = 2000) -> dict:

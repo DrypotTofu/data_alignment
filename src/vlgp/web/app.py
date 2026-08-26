@@ -92,6 +92,21 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
         except (SessionNotFound, NoAlignment) as e:
             raise HTTPException(404, str(e))
 
+    @app.post('/api/sessions/{name}/align')
+    def align_session(name: str):
+        """Generate the camera-anchor alignment table on demand (idempotent).
+
+        Runs in the threadpool; for long sessions this takes seconds to
+        tens of seconds. Returns already_aligned | generated | error.
+        """
+        from vlgp.web.align_service import ensure_alignment
+        try:
+            return ensure_alignment(index, name)
+        except SessionNotFound as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+
     # --------------------------------------------------------------- frames
     @app.get('/api/sessions/{name}/frames/{cam}/{row}')
     def frame(name: str, cam: str, row: int, max_width: int = 960):
