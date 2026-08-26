@@ -43,6 +43,8 @@
 
 26. **T15 受控词表占位符版落地 + 框架模块（2026-08-26，用户指示先搭框架）**：① `scripts/config/task_hierarchy.yaml`（v0.1，`status: placeholder`）——task=触针/抓取/缝合/待机 × subtask + 指令模板，包含 `segments` schema 契约与定稿 TODO 清单；② 新增 `src/vlgp/annotations/` 包 + `task_hierarchy.py`（加载/结构校验、路径与片段校验、自检 CLI，自检全 PASS）。词条语义待 PM/操作者定稿，不阻塞 Web 平台 v0/v1 框架搭建。
 
+27. **T15 Web 平台后端骨架落地（2026-08-26）**：`src/vlgp/web/`（FastAPI）——会话列表/详情、运动量曲线、JPEG 预览帧服务（单帧 + batch 预取）、annotations 读/校验/原子写、task-hierarchy API；静态前端（会话列表 + 三路 canvas 帧视图 + 运动量条 + 播放/逐帧/IN-OUT/状态/保存）；启动 `python -m vlgp.web.app`（127.0.0.1:8765）或 `start_web_platform.bat`；冒烟测试 9/9 通过。依赖注记：本机 Smart App Control （强制）按信誉阻止 conda-forge 的 pyexpat.pyd，env 内 pip 不可用；fastapi/uvicorn 已用 base pip 下载 + 手动解包装入 env，后续 pip/需用户处理 SAC。v0 与 PyQt5 功能逐条对齐待办。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。
