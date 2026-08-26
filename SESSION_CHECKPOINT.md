@@ -1,6 +1,6 @@
 # Session Checkpoint
 
-> 更新时间：2026-08-17（北京时间）
+> 更新时间：2026-08-26（北京时间）
 > 目的：保存当前会话上下文，便于下次 `kimi resume` 后继续工作。
 
 ## 当前状态
@@ -37,6 +37,10 @@
 22. **ADS 诊断结论（2026-08-21）**：192.168.22.22 的 48898 端口不可达 + ping 无响应 → **机器人控制器当前不在线（未开机/网络断开）**，本机 StaticRoutes.xml 完好（RobotController 路由在）。属机器人侧硬件问题，需用户/工程师开机处理。
 22. **T16 模块实现（2026-08-21，commit 35351c3）**：`src/vlgp/kinematics/`——MDH FK（4 臂，自检 12/12 PASS）+ Kabsch 基座系→镜系配准（单/多 session，自检恢复已知变换）。真实数据验证待 ADS 就绪。
 
+23. **T14 真实数据回归 + 全链路（2026-08-26）**：ADS 恢复后首个有效 session `20260821_123455`（30s，4 臂 x10677 行）verify→align→build 全通；meta.json['instruments'] arm2=13 内窥镜 ✅（真实数据，非合成）。
+24. **T16 delta_rot_6d 局部系改造（2026-08-26，commit a2bf3d0）**：按 PM 2026-08-23 决策改为 `R_rel=R(q_i)^T@R(q_{i+1})`（SRT hybrid 约定）；自检 7/7 PASS；静止段回归 median 旋转角 0.000 mdeg（尾部 ~0.05° 为 PLC 四元数量化 ~1e-4 噪声）；新旧约定共轭关系 `R0^T*old*R0=new` 精确到 7.77e-16。
+25. **T16 真实数据验证启动（2026-08-26，commit a2bf3d0/f115dc5）**：新增 `vlgp/kinematics/validate.py` + `validate_kinematics.bat`（报告 `sessions/20260821_123455/t16_validation.json`）；FK vs PLC 全部映射假设失败（4 行映射 + 6144 符号组合 0 命中）→ 需单关节运动实验；Kabsch 单一刚体变换不成立（RMS 68.95mm）→ 疑逐臂安装基座；结论与协议见 `tech_repo/T16_FK与PLC对标验证_20260821.md`。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。
@@ -51,10 +55,10 @@
 - T11 ✅（2026-08-18）：腕部相机成像质量修复完成（AWB）。
 - T12 ✅（2026-08-19）：框架健壮性（fail-fast / CSV 瘦身 / 清理 / 收口）。
 - T13 ✅（2026-08-19）：src/vlgp 包迁移完成，命令改为 `python -m vlgp.*`。
-- T14 ✅（2026-08-21）：instrument_type 透传完成（合成验证；真实 session 回归待 PLC 就绪）。
+- T14 ✅（2026-08-26）：instrument_type 透传完成（合成验证 + 真实回归通过：arm2=内窥镜）。
 - T15：片段级任务层级与指令标注（⏸️ 待 PM 定义受控词表 `task_hierarchy.yaml`；建议 T10-评审后实施）。
-- T16：MDH FK + R_bs 解算（优先级已下调，不阻塞；先核对 delta_rot_6d 约定——已核对并汇报 PM）。
-- 已确认（2026-08-16）：四元数顺序 wxyz；PLC 输出基座系 + 镜系**位置**两套，动作标签 delta_pos 用镜系；**PLC 无镜系四元数**（delta_rot_6d 用基座系，已上报）。
+- T16：MDH FK + R_bs 解算（优先级已下调，不阻塞；delta_rot_6d 已按 PM 决策改为局部系约定并回归 ✅；FK 映射与 R_bs 待单关节运动数据 + 工程师确认，协议见 T16 备忘第四节）。
+- 已确认（2026-08-16）：四元数顺序 wxyz；PLC 输出基座系 + 镜系**位置**两套，动作标签 delta_pos 用镜系；**PLC 无镜系四元数**（delta_rot_6d 用基座系四元数按局部系约定计算，对常值旋转不变）。
 - 暂缓：EL6688 PTP、DAgger GUI、存储格式迁移（本阶段范围外）。
 
 ## 如何恢复会话
