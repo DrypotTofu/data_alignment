@@ -2,6 +2,7 @@
 
 > 创建日期：2026-08-16；最近更新：2026-08-26（执行 Agent：T14 真实数据回归完成（instruments=内窥镜）；T16 delta_rot_6d 局部系改造完成 + 真实数据验证启动（FK/Kabsch 待单关节运动）；剩余 T5+T6 / T7-现场 / T10-评审 / T15 / T16（部分））。
 > 2026-08-23 PM 更新：① T15 定稿 Web 架构（FastAPI + JS 前端），v0 先迁移 T10 裁剪功能进 Web 平台（迁移完成前 PyQt5 版继续可用）；② PM 决策：`delta_rot_6d` 改为 SRT 局部系约定（见 T16 决策注记）。
+> 2026-08-26 PM 更新：图像工程师答复——内窥镜畸变由主机内置矫正（出厂标定存镜头 EEPROM），T7-现场标定范围收缩为腕部双相机；内窥镜双目两路输出可行性待现场确认。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -193,7 +194,7 @@
 - **受控词表先行**：任务分级制度（有哪些 task/subtask、命名规范）由 PM 与操作者先定义一版草案（写进 `task_hierarchy.yaml` + 备忘），GUI 按词表渲染选择器，不允许自由文本，保证标注一致性。
 - **占位符版词表已落地（2026-08-26）**：`scripts/config/task_hierarchy.yaml`（v0.1，`status: placeholder`，task=触针/抓取/缝合/待机 × subtask + 指令模板，含 schema 契约注释与定稿 TODO 清单）；配套框架模块 `vlgp/annotations/task_hierarchy.py`（加载/结构校验/路径与片段校验/自检 CLI `python -m vlgp.annotations.task_hierarchy`，自检全 PASS）。**词条语义待 PM/操作者定稿后升 `status: draft/finalized`（YAML 内 notes 列了 5 项待定事项）**；框架可在占位词表上先行搭建。
 - **Web 平台后端骨架已落地（2026-08-26，commit 19acf55 + 0e9d0bf）**：`src/vlgp/web/`（FastAPI）——`/api/sessions`（列表/详情）、`/api/sessions/{name}/alignment`（运动量曲线，`?stride=`）、`/api/sessions/{name}/frames/{cam}/{row}?max_width=`（JPEG 预览，缓存）+ `POST .../frames/batch`（base64 预取窗）、`GET/PUT .../annotations`（读/校验/原子写，校验含 trim 越界与 T15 片段词表校验）、`/api/task-hierarchy`、`/api/review/queue` + `/api/review/manifest`（批量评审队列）；静态前端 `web/static/`（会话列表 + 三路 canvas 帧视图 + 运动量条点击跳转 + 播放/逐帧 + IN/OUT + approved/rejected/pending + 保存 + 下一个未评审（N 键）+ J/K/L 快进快退，快捷键同 PyQt5 版）；启动 `python -m vlgp.web.app`（默认 127.0.0.1:8765）或 `start_web_platform.bat`。
-- **v0 对齐完成项（2026-08-26）**：① **annotations.json 与 PyQt5 版逐字节一致**——PUT 时服务端按 PyQt5 同格式补 `reviewed_by`（USERNAME）与 `reviewed_at`（本地时区 ISO 秒级），manifest 更新同构；实测 262 字节完全一致 ✅；② 评审队列/清单：`/api/review/queue`（manifest status 非 approved/rejected 即待审，同 PyQt5 `review_manifest.json` 语义）+ 前端「下一个」（N 键）；③ J/K/L 快进快退对齐。**剩余**：前端播放速度选择、运动量曲线图例/缩放、多 session 顺序评审整体回归。
+- **v0 对齐完成项（2026-08-26）**：① **annotations.json 与 PyQt5 版逐字节一致**——PUT 时服务端按 PyQt5 同格式补 `reviewed_by`（USERNAME）与 `reviewed_at`（本地时区 ISO 秒级），manifest 更新同构；实测 262 字节完全一致 ✅；② 评审队列/清单：`/api/review/queue`（manifest status 非 approved/rejected 即待审，同 PyQt5 `review_manifest.json` 语义）+ 前端「下一个」（N 键）；③ J/K/L 快进快退对齐；④ **播放速度与运动量曲线打磨**（2026-08-26）：速度选择器 0.5x/1x/2x/4x + **基于时间的行推进**（`dt×speed×30`，同 PyQt5 `_tick`），J/K/L 跳 `max(1,speed×5)` 帧；曲线**逐线各自最大值归一**（同 PyQt5 `_redraw_curve` 口径）+ 图例 + IN/OUT 虚线标记 + 白色当前行标记；`/alignment` 增 `points` 参数（按像素预算自适应降采样，长 session 轻量；NaN 行已清洗）。**剩余**：多 session 顺序评审整体回归。
 - **依赖注记（已解除）**：本机 Smart App Control 曾按信誉阻止 conda-forge 的 `pyexpat.pyd`（`应用程序控制策略已阻止此文件`）导致 env 内 pip 不可用；**用户已关闭 SAC（VerifiedAndReputablePolicyState=0）**，pyexpat/pip 恢复正常，fastapi/uvicorn 已用 pip 正式重装（`pip check` 通过）。
 - ~~建议在 T10-评审之后实施~~（2026-08-23 修订：T15 改为 Web 平台承载 T10 功能，不再依赖 PyQt5 版评审完成；T10-评审仍建议尽早做，其验收结论直接作为 v0 迁移的功能基线）。
 

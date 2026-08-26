@@ -47,6 +47,8 @@
 
 28. **SAC 已关闭 + T15 v0 对齐（2026-08-26）**：用户关闭 Smart App Control（VerifiedAndReputablePolicyState=0），pyexpat/pip 恢复，fastapi/uvicorn 已用 pip 正式重装（`pip check` 通过）。v0 对齐：① PUT 服务端按 PyQt5 同格式补 `reviewed_by`/`reviewed_at`，**Web 与 PyQt5 同操作序列输出 262 字节完全一致** ✅；② 评审队列 `GET /api/review/queue` + `review_manifest.json`（N 键下一个未评审）；③ J/K/L 快进快退对齐。剩余：播放速度选择、运动量曲线图例/缩放、多 session 顺序评审整体回归。
 
+29. **T15 v0 播放速度 + 运动量曲线打磨（2026-08-26）**：① 速度选择器 0.5x/1x/2x/4x，改为基于时间的行推进（`accum += dt×speed×30`，同 PyQt5 `_tick`），J/K/L 跳`max(1,speed×5)` 帧；② 曲线逐线各自最大值归一 + 图例 + IN/OUT 虚线标记 + 白色当前行标记；`/alignment` 增 `points` 参数（自适应降采样，长 session 轻量），NaN 行已清洗。剩余：多 session 顺序评审整体回归。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。
