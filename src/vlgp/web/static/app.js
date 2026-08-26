@@ -166,8 +166,8 @@ async function saveAnnotations() {
   if (!state.trim) { alert('请先设置 IN/OUT'); return; }
   const ann = {
     version: 1,
-    reviewed_by: '',
-    reviewed_at: new Date().toISOString(),
+    reviewed_by: '',                       // 服务端补（PyQt5 同 USERNAME）
+    reviewed_at: '',                       // 服务端补（本地时区 ISO 秒级）
     status: state.status,
     reject_reason: state.status === 'rejected' ? 'rejected in review' : '',
     trim: state.trim,
@@ -182,11 +182,28 @@ async function saveAnnotations() {
   if (!r.ok) {
     const err = await r.json();
     alert('保存失败: ' + JSON.stringify(err.detail || err));
-    return;
+    return false;
   }
-  state.annotations = ann;
+  const res = await r.json();
+  state.annotations = res.saved;
   alert('已保存 annotations.json');
   loadSessions();
+  return true;
+}
+
+async function nextSession() {
+  // PyQt5 parity (N): save current (if trimmed) then jump to next pending.
+  if (state.trim && state.session) {
+    const ok = await saveAnnotations();
+    if (!ok) return;
+  }
+  let queue;
+  try { queue = await api('/api/review/queue'); }
+  catch { alert('无法读取评审队列'); return; }
+  const pending = queue.pending || [];
+  const rest = pending.filter((n) => n !== state.session);
+  if (!rest.length) { alert('没有更多待评审会话 (全部 approved/rejected)'); return; }
+  await selectSession(rest[0]);
 }
 
 function step(delta) {
@@ -212,6 +229,7 @@ $('btn-prev').onclick = () => step(-1);
 $('btn-next').onclick = () => step(1);
 $('btn-play').onclick = togglePlay;
 $('btn-save').onclick = saveAnnotations;
+$('btn-next-session').onclick = nextSession;
 $('slider').oninput = (e) => { stopPlay(); showRow(parseInt(e.target.value, 10)); };
 $('status').onchange = (e) => { state.status = e.target.value; updateStatusLabel(); };
 $('motion').onclick = (e) => {
@@ -224,6 +242,8 @@ document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.key === 'ArrowLeft') step(-1);
   else if (e.key === 'ArrowRight') step(1);
+  else if (e.key === 'j' || e.key === 'J') { stopPlay(); step(-5); }
+  else if (e.key === 'l' || e.key === 'L') { stopPlay(); step(5); }
   else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
   else if (e.key === '[') setTrim('in');
   else if (e.key === ']') setTrim('out');
@@ -231,6 +251,7 @@ document.addEventListener('keydown', (e) => {
     state.status = ['approved', 'rejected', 'pending'][parseInt(e.key, 10) - 1];
     $('status').value = state.status; updateStatusLabel();
   } else if (e.key === 's' || e.key === 'S') saveAnnotations();
+  else if (e.key === 'n' || e.key === 'N') nextSession();
 });
 
 loadSessions();

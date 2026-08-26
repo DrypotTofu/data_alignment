@@ -134,11 +134,28 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
         if problems:
             raise HTTPException(422, {'errors': problems})
         ann = body.model_dump()
+        # PyQt5 parity: reviewed_by / reviewed_at generated at save time with
+        # identical formatting (os username, local-time ISO seconds).
+        if not ann.get('reviewed_by'):
+            ann['reviewed_by'] = _os_user()
+        if not ann.get('reviewed_at'):
+            ann['reviewed_at'] = _local_iso_seconds()
+        if ann['status'] == 'rejected' and not ann.get('reject_reason'):
+            ann['reject_reason'] = 'rejected in review'
         try:
             index.write_annotations(name, ann)
+            index.update_manifest(name, ann['status'], ann['reviewed_at'])
         except OSError as e:
             raise HTTPException(500, f'write failed: {e}')
         return {'ok': True, 'saved': ann}
+
+    @app.get('/api/review/queue')
+    def review_queue():
+        return index.review_queue()
+
+    @app.get('/api/review/manifest')
+    def review_manifest():
+        return index.read_manifest()
 
     # ------------------------------------------------------- task hierarchy
     @app.get('/api/task-hierarchy')
@@ -160,6 +177,18 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
                   name='static')
 
     return app
+
+
+def _os_user() -> str:
+    """Same as vlgp.review.review_session.os_user (USERNAME/USER env)."""
+    import os
+    return os.environ.get('USERNAME') or os.environ.get('USER') or ''
+
+
+def _local_iso_seconds() -> str:
+    """PyQt5 parity: local time, UTC offset, seconds precision."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec='seconds')
 
 
 def _validate_annotations(body: AnnotationsIn, index: SessionIndex,

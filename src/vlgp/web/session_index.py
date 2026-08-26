@@ -173,3 +173,33 @@ class SessionIndex:
         p = sl.annotations_path(d)
         p.write_text(json.dumps(ann, ensure_ascii=False, indent=2),
                      encoding='utf-8')
+
+    # ------------------------------------------------- review manifest
+    def manifest_path(self) -> Path:
+        """sessions/review_manifest.json — batch queue (PyQt5 parity)."""
+        return self.root / 'review_manifest.json'
+
+    def read_manifest(self) -> dict:
+        p = self.manifest_path()
+        if p.exists():
+            return json.loads(p.read_text(encoding='utf-8'))
+        return {}
+
+    def update_manifest(self, name: str, status: str, reviewed_at: str) -> None:
+        """Mirror the PyQt5 review tool's _update_manifest (same key order)."""
+        manifest = self.read_manifest()
+        manifest[name] = {'status': status, 'reviewed_at': reviewed_at,
+                          'has_annotations': True}
+        p = self.manifest_path()
+        p.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
+                     encoding='utf-8')
+
+    def review_queue(self) -> dict:
+        """Pending sessions (manifest status not approved/rejected), PyQt5 parity."""
+        manifest = self.read_manifest()
+        sessions = self.list_sessions()
+        pending = [s['name'] for s in sessions
+                   if manifest.get(s['name'], {}).get('status')
+                   not in ('approved', 'rejected')]
+        return {'pending': pending, 'n_pending': len(pending),
+                'n_total': len(sessions)}
