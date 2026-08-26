@@ -1,6 +1,6 @@
 # AGENT 任务交接：开始采集标注/训练数据前的就绪工作
 
-> 创建日期：2026-08-16；最近更新：2026-08-21（执行 Agent：T14 完成；T16 前置核对完成（结论见任务清单）；发现 robot_pose=0 新 session 需正式采集前排查；剩余 T5+T6 / T7-现场 / T10-评审 / T15 / T16）。
+> 创建日期：2026-08-16；最近更新：2026-08-26（执行 Agent：T14 真实数据回归完成（instruments=内窥镜）；T16 delta_rot_6d 局部系改造完成 + 真实数据验证启动（FK/Kabsch 待单关节运动）；剩余 T5+T6 / T7-现场 / T10-评审 / T15 / T16（部分））。
 > 2026-08-23 PM 更新：① T15 定稿 Web 架构（FastAPI + JS 前端），v0 先迁移 T10 裁剪功能进 Web 平台（迁移完成前 PyQt5 版继续可用）；② PM 决策：`delta_rot_6d` 改为 SRT 局部系约定（见 T16 决策注记）。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
@@ -189,13 +189,17 @@
 - **受控词表先行**：任务分级制度（有哪些 task/subtask、命名规范）由 PM 与操作者先定义一版草案（写进 `task_hierarchy.yaml` + 备忘），GUI 按词表渲染选择器，不允许自由文本，保证标注一致性。
 - ~~建议在 T10-评审之后实施~~（2026-08-23 修订：T15 改为 Web 平台承载 T10 功能，不再依赖 PyQt5 版评审完成；T10-评审仍建议尽早做，其验收结论直接作为 v0 迁移的功能基线）。
 
-### T16. 基于 MDH 的运动学验证与基座系→镜系变换解算（2026-08-21 模块实现完成，数据验证待 ADS）
+### T16. 基于 MDH 的运动学验证与基座系→镜系变换解算（2026-08-21 模块实现；2026-08-21 delta_rot_6d 改造完成；FK/Kabsch 数据验证待单关节运动）
 
-**已完成（commit 35351c3，`src/vlgp/kinematics/`）**：
-- **MDH FK**：4 臂 FK 实现（13 链节 j3..jaw，Modified DH，从 `tech_repo/MDH参数表.md` 转写），自检 12/12 PASS（正交/确定性/有限值，零位姿 arm1≈[591,202,1425]mm）。
-- **Kabsch 基座系→镜系**：`transform.py` 单 session 解算 + 多 session 交叉验证（验收线旋转<1°/平移<5mm/RMS 报告）；合成数据自检恢复已知变换（旋转 0.005°、平移 0.04mm）。
-- **前置核对**：SRT delta 旋转约定（`q_t⁻¹⊗q_{t+1}` frame-invariant；当前实现 `R1@R0^T` 非）已汇报，待 PM 定夺是否改动。
-- **待 ADS 就绪**：① FK 复算 vs PLC 输出误差报告 + 关节 3–15↔CSV joint_1..12 映射确认；② R_bs/t_bs 多 session 一致性；③ `delta_rot_6d` 改造（**PM 已批准，见下方决策注记**）。
+**已完成（commit 35351c3 + 本批，`src/vlgp/kinematics/` + `build_srth_dataset.py`）**：
+- **MDH FK**：4 臂 FK 实现（13 链节 j3..jaw，Modified DH，从 `tech_repo/MDH参数表.md` 转写），自检 12/12 PASS。
+- **Kabsch 基座系→镜系**：`transform.py` 单 session 解算 + 多 session 交叉验证（验收线旋转<1°/平移<5mm/RMS 报告）；合成数据自检通过。
+- **`delta_rot_6d` 局部系改造 ✅（PM 2026-08-23 批准）**：改为 `R_rel = R(q_i)^T @ R(q_{i+1})`（`q_i⁻¹⊗q_{i+1}`，SRT hybrid 约定）；自检 7/7 PASS（新增判别性测试）；静止段回归 median 旋转角 0.000 mdeg（尾部 ~0.05° 为 PLC 四元数量化 ~1e-4 噪声）；新旧约定共轭关系 `R0^T·old·R0=new` 偏差 7.77e-16；重建 episode 的 delta_rot_6d ≈ 单位阵。T9 遗留风险消解，`R_bs` 降级为增强项。
+- **真实数据验证（sessions/20260821_123455，首个 ADS 有效会话）**：新增 `vlgp/kinematics/validate.py`（`validate_kinematics.bat`），报告见 `tech_repo/T16_FK与PLC对标验证_20260821.md`：
+  - 通过：四元数单位范数、关节/位置/scope 稳定性、arm2=内窥镜（scope 原点）。
+  - **FK vs PLC：全部映射假设失败**（4 种行映射 + 6144 符号组合 0 命中，位置误差 0.7~1.5m）——CSV `Joint_Angles` 与 MDH 关节值非简单"表内 theta 偏移+符号"关系，静态单点无法解析顺序/零位/符号。
+  - **Kabsch 单一刚体变换不成立**：R_bs 残差 RMS 68.95mm（逐臂 34~83mm）——各臂 `ArmFrame` 疑为各自安装基座（MDH joint3 theta=0/60/120/180 即安装旋转），或 PLC scope 帧换算有逐臂细节。
+  - **下一步（需机器人工程师，与 T5/T6 同批）**：单关节运动实验协议见备忘第四节（每次只动 1 关节、已知增量 ±10°/±10mm、每位置保持 2~3s、≥30s 会话），重跑 `validate_kinematics.bat` 解析映射/符号/零位；同时为 Kabsch 提供 ≥2 位姿逐臂求解。已列 4 个待工程师确认问题（ArmFrame 坐标系定义、Joint_Angles 是否绝对/已补偿、PLC FK 约定、theta 偏移语义）。
 
 > **PM 决策（2026-08-23）：批准 `delta_rot_6d` 改造为 SRT 局部系约定**（`R_delta = R_t^T · R_{t+1}`，即 `q_t⁻¹ ⊗ q_{t+1}`，delta 旋转表达在 t 时刻末端系）。理由：① 与复现目标 SRT 的 hybrid relative actions 严格对齐；② 该约定对基座/镜系的常值旋转**不变**，T9 遗留风险随之彻底消解，`R_bs` 不再是正确性前提；③ 改动局部（差分处换乘序），回归成本低。要求：改造后跑数值回归（静止段 delta_rot≈0、与改造前对比差异应为常值旋转共轭关系），单元自检同步更新。R_bs 解算保留为交叉验证/增强项，不阻塞。
 
