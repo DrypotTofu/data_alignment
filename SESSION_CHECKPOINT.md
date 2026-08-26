@@ -45,6 +45,8 @@
 
 27. **T15 Web 平台后端骨架落地（2026-08-26）**：`src/vlgp/web/`（FastAPI）——会话列表/详情、运动量曲线、JPEG 预览帧服务（单帧 + batch 预取）、annotations 读/校验/原子写、task-hierarchy API；静态前端（会话列表 + 三路 canvas 帧视图 + 运动量条 + 播放/逐帧/IN-OUT/状态/保存）；启动 `python -m vlgp.web.app`（127.0.0.1:8765）或 `start_web_platform.bat`；冒烟测试 9/9 通过。依赖注记：本机 Smart App Control （强制）按信誉阻止 conda-forge 的 pyexpat.pyd，env 内 pip 不可用；fastapi/uvicorn 已用 base pip 下载 + 手动解包装入 env，后续 pip/需用户处理 SAC。v0 与 PyQt5 功能逐条对齐待办。
 
+28. **SAC 已关闭 + T15 v0 对齐（2026-08-26）**：用户关闭 Smart App Control（VerifiedAndReputablePolicyState=0），pyexpat/pip 恢复，fastapi/uvicorn 已用 pip 正式重装（`pip check` 通过）。v0 对齐：① PUT 服务端按 PyQt5 同格式补 `reviewed_by`/`reviewed_at`，**Web 与 PyQt5 同操作序列输出 262 字节完全一致** ✅；② 评审队列 `GET /api/review/queue` + `review_manifest.json`（N 键下一个未评审）；③ J/K/L 快进快退对齐。剩余：播放速度选择、运动量曲线图例/缩放、多 session 顺序评审整体回归。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。

@@ -55,9 +55,13 @@
 
 ### T7-现场. 真实标定板内参采集（正式采集前必须就位）
 
-- 打印棋盘格（内角点 9×6，方格 20–25 mm）并**实测**边长；逐台相机用 `collect_calibration.py` 采 15–25 张合格帧；运行内参计算。
+- **标定范围修订（2026-08-26，图像工程师答复）**：内窥镜（arm_2）的畸变矫正**在主机内完成**——出厂标定参数存于镜头 EEPROM/FLASH，主机上电读取并内置算法矫正，采集卡拿到的 720p 图像已是**矫正+靶面裁剪后的成品**，无需也不应再做现场去畸变。因此现场标定范围收缩为：
+  - **arm_1 / arm_3（腕部 USB 相机）**：仍按原计划做完整棋盘格内参标定（含畸变系数）；
+  - **arm_2（内窥镜）**：不做畸变标定。仅当未来需要度量级视觉（手眼 PnP、深度）时，在**输出图像**上自标一次等效 K（畸变系数固定为 0，只标内参矩阵）——出厂参数存在镜头里且主机做了靶面裁剪，直接用不上。
+  - **待确认事项（双目）**：工程师确认内窥镜为**双目镜子**，出厂已做两路时钟帧同步 + 垂直偏差校正（用于 3D 合成）。当前采集卡只取了一路 720p（index 0）——需现场确认：① 采集的是左目还是右目（或 3D 合成画面）；② 主机/采集卡能否同时输出两路（若可行，双目深度匹配成为可能，非阻塞，SRT 深度靠腕部相机）。
+- 操作：打印棋盘格（内角点 9×6，方格 20–25 mm）并**实测**边长；腕部相机逐台用 `collect_calibration.py` 采 15–25 张合格帧；运行内参计算。
 - 验收：各相机 RMS < 0.5 px；产出 `calibrations/calib_<ts>/`（含 `calibration.json` 与各相机 `intrinsics.yaml`）；记录标定 ID。
-- 注意：对焦/位置变动后必须重标。
+- 注意：对焦/位置变动后必须重标（腕部相机）；内窥镜改动主机设置或换镜后需重新评估等效 K。
 - **手眼标定扩展（2026-08-20 并入，源自 T9 答复）**：T9 已确认 `EndEffector_Orientation` 四元数定义在**机械臂基坐标系**，而 `delta_rot_6d` 期望镜系动作轴，两者相差一个常值旋转 `R_arm`。内窥镜固定时该误差为常值、短期可接受（不阻塞 T5/T6 与试采集），但**正式训练数据采集前必须标定**。方案见 `T9_PLC四元数坐标系确认_20260817.md` 第 3 节：内窥镜固定、臂端标记物摆 ≥8 组位姿，与内参标定同场完成；产出 `calibrations/<id>/hand_eye/`，`build_srth_dataset.py` 读取并应用。
   - **2026-08-20 更新：相机手眼方案降级为可选交叉验证。** 收到 MDH 参数表后，基座系→镜系变换可用 **T16** 的离线数据路线解算（Kabsch 配准成对位置点，无需标定板）。若 T16 闭合，本项不再阻塞正式采集；相机方案仅作为误差交叉验证手段保留。
 
@@ -188,7 +192,9 @@
 依赖与前置：
 - **受控词表先行**：任务分级制度（有哪些 task/subtask、命名规范）由 PM 与操作者先定义一版草案（写进 `task_hierarchy.yaml` + 备忘），GUI 按词表渲染选择器，不允许自由文本，保证标注一致性。
 - **占位符版词表已落地（2026-08-26）**：`scripts/config/task_hierarchy.yaml`（v0.1，`status: placeholder`，task=触针/抓取/缝合/待机 × subtask + 指令模板，含 schema 契约注释与定稿 TODO 清单）；配套框架模块 `vlgp/annotations/task_hierarchy.py`（加载/结构校验/路径与片段校验/自检 CLI `python -m vlgp.annotations.task_hierarchy`，自检全 PASS）。**词条语义待 PM/操作者定稿后升 `status: draft/finalized`（YAML 内 notes 列了 5 项待定事项）**；框架可在占位词表上先行搭建。
-- **Web 平台后端骨架已落地（2026-08-26，commit 待记录）**：`src/vlgp/web/`（FastAPI）——`/api/sessions`（列表/详情）、`/api/sessions/{name}/alignment`（运动量曲线，`?stride=`）、`/api/sessions/{name}/frames/{cam}/{row}?max_width=`（JPEG 预览，缓存）+ `POST .../frames/batch`（base64 预取窗）、`GET/PUT .../annotations`（读/校验/原子写，校验含 trim 越界与 T15 片段词表校验）、`/api/task-hierarchy`；静态前端 `web/static/`（会话列表 + 三路 canvas 帧视图 + 运动量条点击跳转 + 播放/逐帧 + IN/OUT + approved/rejected/pending + 保存，快捷键同 PyQt5 版）；启动 `python -m vlgp.web.app`（默认 127.0.0.1:8765）或 `start_web_platform.bat`。冒烟测试 9/9 通过（含 trim 越界 422 拒绝、openapi 正常）。依赖 fastapi/uvicorn 已装入 SurgDataColl（手动 wheel，见备忘注记）。**待办**：与 PyQt5 版功能逐条对齐（v0 验收：同操作序列 annotations.json 逐字节一致）、批量队列/评审清单、前端打磨。
+- **Web 平台后端骨架已落地（2026-08-26，commit 19acf55 + 0e9d0bf）**：`src/vlgp/web/`（FastAPI）——`/api/sessions`（列表/详情）、`/api/sessions/{name}/alignment`（运动量曲线，`?stride=`）、`/api/sessions/{name}/frames/{cam}/{row}?max_width=`（JPEG 预览，缓存）+ `POST .../frames/batch`（base64 预取窗）、`GET/PUT .../annotations`（读/校验/原子写，校验含 trim 越界与 T15 片段词表校验）、`/api/task-hierarchy`、`/api/review/queue` + `/api/review/manifest`（批量评审队列）；静态前端 `web/static/`（会话列表 + 三路 canvas 帧视图 + 运动量条点击跳转 + 播放/逐帧 + IN/OUT + approved/rejected/pending + 保存 + 下一个未评审（N 键）+ J/K/L 快进快退，快捷键同 PyQt5 版）；启动 `python -m vlgp.web.app`（默认 127.0.0.1:8765）或 `start_web_platform.bat`。
+- **v0 对齐完成项（2026-08-26）**：① **annotations.json 与 PyQt5 版逐字节一致**——PUT 时服务端按 PyQt5 同格式补 `reviewed_by`（USERNAME）与 `reviewed_at`（本地时区 ISO 秒级），manifest 更新同构；实测 262 字节完全一致 ✅；② 评审队列/清单：`/api/review/queue`（manifest status 非 approved/rejected 即待审，同 PyQt5 `review_manifest.json` 语义）+ 前端「下一个」（N 键）；③ J/K/L 快进快退对齐。**剩余**：前端播放速度选择、运动量曲线图例/缩放、多 session 顺序评审整体回归。
+- **依赖注记（已解除）**：本机 Smart App Control 曾按信誉阻止 conda-forge 的 `pyexpat.pyd`（`应用程序控制策略已阻止此文件`）导致 env 内 pip 不可用；**用户已关闭 SAC（VerifiedAndReputablePolicyState=0）**，pyexpat/pip 恢复正常，fastapi/uvicorn 已用 pip 正式重装（`pip check` 通过）。
 - ~~建议在 T10-评审之后实施~~（2026-08-23 修订：T15 改为 Web 平台承载 T10 功能，不再依赖 PyQt5 版评审完成；T10-评审仍建议尽早做，其验收结论直接作为 v0 迁移的功能基线）。
 
 ### T16. 基于 MDH 的运动学验证与基座系→镜系变换解算（2026-08-21 模块实现；2026-08-21 delta_rot_6d 改造完成；FK/Kabsch 数据验证待单关节运动）
