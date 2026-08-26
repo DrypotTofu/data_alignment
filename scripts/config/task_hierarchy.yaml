@@ -1,0 +1,135 @@
+# ============================================================================
+# T15 片段级任务层级与指令标注 —— 受控词表（占位符版 v0.1）
+# 文件：scripts/config/task_hierarchy.yaml
+# 状态：PLACEHOLDER —— 结构已定型，词条为占位示例，待 PM 与操作者定稿后升级为
+#       status: draft / finalized。GUI 选择器按本词表渲染，不允许自由文本。
+#
+# 用途（AGENT_HANDOFF.md T15 / 0803 备忘 13.5 节）：
+#   SRT-H 数据语义层 —— 每条 session 在裁剪后的有效区间内划分为连续、不重叠、
+#   全覆盖的片段，每片段标注「层级路径 + 语言指令」；H policy 的指令即训练数据
+#   的语言条件层。
+#
+# ---- schema 契约（与 AGENT_HANDOFF.md T15 第 2 条一致）----
+# 片段标注写入 <session>/annotations.json["segments"][i]：
+#   {
+#     "start_row":   <int>,   # 对齐表（camera_anchor_alignment.csv）0-based 行号
+#     "end_row":     <int>,   # 含 end_row；end_row >= start_row
+#     "path":        ["<task_id>", "<subtask_id>"],   # 层级路径，id 出自下方词表
+#     "instruction": "<指令文本，取自 path 对应节点的 instructions 模板>",
+#     "corrective":  false    # v2 预留：纠错动作标记
+#   }
+# v1 只启用 task + subtask 两层；subsubtask 为 v2 预留（levels[1].child）。
+# 向后兼容：仅含 trim/status 的旧 annotations.json 不受影响。
+# ============================================================================
+
+version: 0.1
+status: placeholder          # placeholder | draft | finalized
+last_updated: "2026-08-26"
+owner: PM / 操作者（待定稿）
+
+# ---- 层级定义 ----
+levels:
+  - id: task
+    label_zh: 任务
+    label_en: task
+    required: true
+    child: subtask
+  - id: subtask
+    label_zh: 子任务
+    label_en: subtask
+    required: true
+    child: null              # v2 预留：subsubtask
+
+# ---- 词表树 ----
+# 每个叶子节点必须带非空 instructions（指令模板，标注时从模板选择）。
+# 注意：以下词条均为占位示例 —— task 依据 0803 备忘「简单任务选择触针、抓针、
+# 自主缝合」设定，subtask / 指令模板为骨架示意，语义与措辞待 PM/操作者定稿。
+hierarchy:
+  - id: needle_passing
+    label_zh: 触针
+    label_en: needle passing
+    subtasks:
+      - id: approach
+        label_zh: 靠近
+        instructions:
+          - 靠近持针位置
+      - id: grasp_needle
+        label_zh: 夹持缝针
+        instructions:
+          - 夹持缝针
+      - id: insert_needle
+        label_zh: 进针
+        instructions:
+          - 进针
+      - id: pull_needle
+        label_zh: 出针
+        instructions:
+          - 出针
+      - id: release_needle
+        label_zh: 释放缝针
+        instructions:
+          - 释放缝针
+
+  - id: grasping
+    label_zh: 抓取
+    label_en: grasping
+    subtasks:
+      - id: approach
+        label_zh: 靠近
+        instructions:
+          - 靠近目标物
+      - id: grasp_object
+        label_zh: 夹取
+        instructions:
+          - 夹取目标物
+      - id: lift_object
+        label_zh: 提起
+        instructions:
+          - 提起目标物
+      - id: release_object
+        label_zh: 释放
+        instructions:
+          - 释放目标物
+
+  - id: suturing
+    label_zh: 缝合
+    label_en: suturing
+    subtasks:
+      - id: position_needle
+        label_zh: 摆位
+        instructions:
+          - 调整缝针位置
+      - id: pierce_tissue
+        label_zh: 穿刺
+        instructions:
+          - 穿刺组织
+      - id: drive_needle
+        label_zh: 过针
+        instructions:
+          - 过针
+      - id: pull_suture
+        label_zh: 拉线
+        instructions:
+          - 拉线
+      - id: tie_knot
+        label_zh: 打结
+        instructions:
+          - 打结
+
+  - id: idle
+    label_zh: 待机/无操作
+    label_en: idle / no operation
+    subtasks:
+      - id: no_operation
+        label_zh: 无操作
+        instructions:
+          - 无操作
+          - 等待
+
+# ---- 待 PM/操作者定稿事项（TODO）----
+notes:
+  - task 枚举是否覆盖全部演示任务？是否增加「转运/递器械」等任务？
+  - subtask 粒度是否合适（v1 先单层，粒度可粗）？
+  - 指令模板措辞与 SRT-H H policy 输出形式对齐（中/英文？是否带宾语占位符）？
+  - idle 节点是否保留（片段要求全覆盖时，非任务段归入 idle 还是允许跳过）？
+  - corrective 标记语义（v2 与备忘 13.3.5 纠正指令生成联动）确认。
