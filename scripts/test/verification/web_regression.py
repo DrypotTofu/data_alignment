@@ -286,8 +286,23 @@ def main() -> int:
         detail = body.get('detail') if isinstance(body, dict) else None
         ok = s == 422 and isinstance(detail, dict) and 'error' in detail
         check('align no-robot-data 422', ok, str(body)[:80])
-    # note: full generation path (unaligned -> generated, byte-identical to
-    # the CLI) is exercised manually; it requires moving session data.
+    # note: full generation path (unaligned -> started -> status done,
+    # byte-identical to the CLI) is exercised manually; it requires moving
+    # session data.
+
+    # ----------------------------- H. align status + per-row robot status
+    section(base, 'H. align status + robot row status')
+    s, body, _ = get(base, f'/api/sessions/{session}/align/status')
+    check('align status endpoint', s == 200 and body.get('status') in ('idle', 'done'))
+    s, body, _ = get(base, f'/api/sessions/{session}/row/10')
+    arms = body.get('arms', {})
+    ok = s == 200 and set(arms) == {'arm1', 'arm2', 'arm3', 'arm4'} \
+        and arms['arm2']['instrument'] == '内窥镜' \
+        and arms['arm2']['scope_position_mm'] == [0.0, 0.0, 0.0]
+    check('row status 4 arms + instruments', ok,
+          f"arm2 instr={arms.get('arm2', {}).get('instrument')}")
+    s, _, _ = get(base, f'/api/sessions/{session}/row/999999')
+    check('row status out of range 404', s == 404)
 
     # ------------------------------------------------------------ cleanup
     if not args.keep:

@@ -129,6 +129,73 @@ class SessionIndex:
         """Drop cached alignment data for one session (after regeneration)."""
         self._align_cache.pop(_safe_name(name), None)
 
+    # ------------------------------------------------------- row status
+    def row_status(self, name: str, row: int) -> dict:
+        """Per-arm robot status snapshot for one alignment row.
+
+        NaN fields (pose-invalid rows) become None. Includes the instrument
+        label via vlgp's instrument table.
+        """
+        from vlgp.dataset.build_srth_dataset import instrument_label
+        df = self.alignment(name)
+        if not 0 <= row < len(df):
+            raise IndexError(f'row {row} out of range [0, {len(df)})')
+        r = df.iloc[row]
+        prev = df.iloc[row - 1] if row > 0 else None
+
+        def g(col: str):
+            v = r.get(col)
+            if v is None:
+                return None
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return None
+            return None if f != f else round(f, 4)  # NaN -> None
+
+        arms: dict[str, dict] = {}
+        for a in ARMS:
+            pre = f'arm{a}_'
+            pos = [g(pre + c) for c in ('position_x', 'position_y', 'position_z')]
+            scope = [g(pre + c) for c in ('scope_position_x', 'scope_position_y',
+                                          'scope_position_z')]
+            quat = [g(pre + c) for c in ('orientation_w', 'orientation_x',
+                                         'orientation_y', 'orientation_z')]
+            inst = g(pre + 'instrument_type')
+            entry = {
+                'position_mm': pos,
+                'scope_position_mm': scope,
+                'orientation_wxyz': quat,
+                'gripper_angle': g(pre + 'gripper_angle'),
+                'instrument_type': inst,
+                'instrument': instrument_label(inst) if inst is not None else None,
+                'energy_instrument_status': g(pre + 'energy_instrument_status'),
+            }
+            entry['dpos_mm'] = None
+            if prev is not None and all(v is not None for v in scope):
+                dv: list[float] = []
+                ok = True
+                for k, c in enumerate(('scope_position_x', 'scope_position_y',
+                                       'scope_position_z')):
+                    pv = prev.get(pre + c)
+                    if pv is None:
+                        ok = False
+                        break
+                    try:
+                        pf = float(pv)
+                    except (TypeError, ValueError):
+                        ok = False
+                        break
+                    if pf != pf:  # NaN
+                        ok = False
+                        break
+                    dv.append(scope[k] - pf)
+                if ok:
+                    entry['dpos_mm'] = round(
+                        float(np.sqrt(sum(x * x for x in dv))), 4)
+            arms[f'arm{a}'] = entry
+        return {'row': int(row), 'arms': arms}
+
     # -------------------------------------------------------------- motion
     def motion(self, name: str, stride: int | None = None,
                points: int = 2000) -> dict:

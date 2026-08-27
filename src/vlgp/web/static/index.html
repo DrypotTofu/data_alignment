@@ -18,12 +18,17 @@
         <span id="status-label"></span>
       </header>
       <div id="align-status"></div>
+      <div id="align-progress" hidden><div id="align-progress-fill"></div></div>
       <section id="views">
         <canvas id="cam-2" class="cam endoscope" width="640" height="360"></canvas>
         <canvas id="cam-1" class="cam wrist" width="320" height="240"></canvas>
         <canvas id="cam-3" class="cam wrist" width="320" height="240"></canvas>
       </section>
       <canvas id="motion" width="960" height="120"></canvas>
+      <section id="robot-panel">
+        <div id="arm-tabs"></div>
+        <div id="arm-status"></div>
+      </section>
       <section id="transport">
         <input type="range" id="slider" min="0" max="0" value="0">
         <div class="buttons">

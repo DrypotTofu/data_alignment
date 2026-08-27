@@ -22,9 +22,31 @@ const state = {
   annotations: null,
   motionRows: [],
   motionDpos: {},             // arm -> Float array (downsampled)
+  arm: 1,                     // arm shown in the robot status panel
+  rowStatus: null,            // latest /api/row/{row} payload
+  statusTimer: null,          // debounce for row-status fetches
 };
 
 const $ = (id) => document.getElementById(id);
+
+function fmt(v, digits = 2) {
+  if (v === null || v === undefined) return '—';
+  if (Array.isArray(v)) return v.map((x) => fmt(x, digits)).join(', ');
+  return typeof v === 'number' ? v.toFixed(digits) : String(v);
+}
+
+function fmtVec(v, digits = 1) { return v && v.length ? fmt(v, digits) : '—'; }
+
+// quaternion [w,x,y,z] -> intrinsic ZYX euler angles in degrees
+function quatToEulerDeg(q) {
+  if (!q || q.some((x) => x === null)) return null;
+  const [w, x, y, z] = q;
+  const roll = Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y));
+  const sinp = 2 * (w * y - z * x);
+  const pitch = Math.abs(sinp) >= 1 ? Math.sign(sinp) * Math.PI / 2 : Math.asin(sinp);
+  const yaw = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
+  return [roll, pitch, yaw].map((v) => (v * 180 / Math.PI).toFixed(1));
+}
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -48,20 +70,55 @@ async function loadSessions() {
 }
 
 // Generate the camera-anchor alignment table on first open of an unaligned
-// session (server runs the same pipeline as align_camera_anchor).
+// session. POST starts an async job; the progress bar polls /align/status.
 async function ensureAligned(name) {
   const msg = $('align-status');
-  msg.textContent = '正在生成对齐轴（首次打开未对齐会话，自动对齐中，请稍候）…';
+  const bar = $('align-progress');
+  const fill = $('align-progress-fill');
+  msg.textContent = '正在生成对齐轴（首次打开未对齐会话，自动对齐中）…';
+  bar.hidden = false;
+  fill.style.width = '0%';
+  let r;
   try {
-    const r = await fetch(`/api/sessions/${name}/align`, { method: 'POST' });
-    const body = await r.json();
-    if (!r.ok) throw new Error((body && body.error) || `${r.status} ${r.statusText}`);
-    msg.textContent = body.status === 'already_aligned'
-      ? '' : `对齐完成：${body.n_rows} 行 (${body.elapsed_s}s)`;
+    r = await fetch(`/api/sessions/${name}/align`, { method: 'POST' });
+  } catch (e) {
+    msg.textContent = '对齐请求失败: ' + e.message;
+    bar.hidden = true;
+    throw e;
+  }
+  let body;
+  try { body = await r.json(); } catch { body = {}; }
+  if (!r.ok) {
+    const detail = body && body.detail;
+    const reason = (detail && detail.error) || body.error || `${r.status} ${r.statusText}`;
+    msg.textContent = '';
+    bar.hidden = true;
+    throw new Error(reason);
+  }
+  if (body.status === 'already_aligned') {
+    msg.textContent = '';
+    bar.hidden = true;
     return body;
-  } finally {
-    // keep the completion message for a moment, then clear
-    setTimeout(() => { if (!state.playing) msg.textContent = ''; }, 4000);
+  }
+  // poll progress until done / error
+  for (;;) {
+    await new Promise((res) => setTimeout(res, 400));
+    let st;
+    try { st = await api(`/api/sessions/${name}/align/status`); } catch { continue; }
+    if (st.status === 'done') {
+      msg.textContent = `对齐完成：${st.result.n_rows} 行 (${st.elapsed_s}s)`;
+      bar.hidden = true;
+      setTimeout(() => { if (!state.playing) msg.textContent = ''; }, 5000);
+      return st.result;
+    }
+    if (st.status === 'error') {
+      msg.textContent = '';
+      bar.hidden = true;
+      throw new Error(st.error || '对齐失败');
+    }
+    const pct = st.total ? Math.round(st.current / st.total * 100) : 0;
+    fill.style.width = pct + '%';
+    msg.textContent = `${st.message || '对齐中'}… ${st.total ? `${st.current}/${st.total}` : ''} (${pct}%)`;
   }
 }
 
@@ -93,6 +150,7 @@ async function selectSession(name) {
     await loadMotion();
     updateStatusLabel();
     updateTrimInfo();
+    buildArmTabs();
     await showRow(0);
     loadSessions();                                    // refresh badge
   } catch (err) {
@@ -193,6 +251,56 @@ async function showRow(row) {
       im.src = img;
     }
   }
+  scheduleRowStatus(row);
+}
+
+// -------------------------------------------------------- robot status panel
+async function fetchRowStatus(row) {
+  try {
+    state.rowStatus = await api(`/api/sessions/${state.session}/row/${row}`);
+    renderArmStatus();
+  } catch { /* row may be out of range mid-prefetch; ignore */ }
+}
+
+function scheduleRowStatus(row) {
+  clearTimeout(state.statusTimer);
+  state.statusTimer = setTimeout(() => fetchRowStatus(row), 150);
+}
+
+function buildArmTabs() {
+  const tabs = $('arm-tabs');
+  tabs.innerHTML = '';
+  for (let a = 1; a <= 4; a++) {
+    const b = document.createElement('button');
+    b.className = 'arm-tab' + (a === state.arm ? ' active' : '');
+    b.textContent = `arm${a}`;
+    b.onclick = () => { state.arm = a; renderArmStatus(); };
+    tabs.appendChild(b);
+  }
+}
+
+function renderArmStatus() {
+  document.querySelectorAll('.arm-tab').forEach((b, i) => {
+    b.classList.toggle('active', i + 1 === state.arm);
+  });
+  const box = $('arm-status');
+  const rs = state.rowStatus;
+  const a = rs && rs.arms ? rs.arms[`arm${state.arm}`] : null;
+  if (!a) { box.innerHTML = '<span class="v na">暂无数据</span>'; return; }
+  const euler = quatToEulerDeg(a.orientation_wxyz);
+  const rows = [
+    ['位置 (mm)', fmtVec(a.position_mm)],
+    ['镜系位置 (mm)', fmtVec(a.scope_position_mm)],
+    ['四元数 (wxyz)', fmtVec(a.orientation_wxyz, 4)],
+    ['欧拉角 (deg)', euler ? euler.join(', ') : '—'],
+    ['夹爪角度', fmt(a.gripper_angle, 2)],
+    ['本步位移 (mm)', fmt(a.dpos_mm, 3)],
+    ['器械', a.instrument || '—'],
+    ['能量状态', fmt(a.energy_instrument_status, 0)],
+  ];
+  box.innerHTML = rows.map(([k, v]) =>
+    `<span class="k">${k}</span><span class="v${v === '—' ? ' na' : ''}">${v}</span>`
+  ).join('');
 }
 
 function setTrim(which) {

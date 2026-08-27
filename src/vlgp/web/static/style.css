@@ -16,9 +16,24 @@ body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
 #status-label.rejected { color: #e07070; }
 #align-status { min-height: 20px; margin: 2px 0 6px; color: #ffd479;
                 font-size: 13px; }
+#align-progress { height: 6px; background: #2b3038; border-radius: 3px;
+                  margin-bottom: 6px; overflow: hidden; }
+#align-progress-fill { height: 100%; width: 0; background: #ffd479;
+                       border-radius: 3px; transition: width .2s; }
 #session-list li .badge { display: inline-block; margin-left: 6px;
                           padding: 0 5px; font-size: 10px; border-radius: 3px;
                           background: #5b4a1f; color: #ffd479; }
+#robot-panel { margin-top: 8px; background: #20242a; border-radius: 6px;
+               padding: 8px 10px; }
+#arm-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.arm-tab { padding: 3px 14px; border: 1px solid #3a4250; border-radius: 4px;
+           background: #2b3038; color: #b9c2cf; cursor: pointer; font-size: 13px; }
+.arm-tab.active { background: #2c5f8a; color: #fff; border-color: #2c5f8a; }
+#arm-status { display: grid; grid-template-columns: repeat(6, auto) 1fr;
+              gap: 4px 18px; font-size: 12px; align-items: baseline; }
+#arm-status .k { color: #7d8794; }
+#arm-status .v { color: #e8ecf1; font-family: Consolas, monospace; }
+#arm-status .v.na { color: #5a6270; }
 #views { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 6px;
          background: #000; border-radius: 6px; padding: 6px; }
 .cam { width: 100%; background: #111; border-radius: 4px; image-rendering: auto; }

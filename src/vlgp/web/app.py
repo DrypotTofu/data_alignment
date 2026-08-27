@@ -94,18 +94,37 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
 
     @app.post('/api/sessions/{name}/align')
     def align_session(name: str):
-        """Generate the camera-anchor alignment table on demand (idempotent).
+        """Start on-demand alignment generation (async; idempotent).
 
-        Runs in the threadpool; for long sessions this takes seconds to
-        tens of seconds. Returns already_aligned | generated | error.
+        Preconditions (robot data, anchor metadata) are checked synchronously
+        so the frontend gets an immediate 422; the heavy computation runs in
+        a background thread and progress is polled via
+        ``GET /api/sessions/{name}/align/status``.
         """
-        from vlgp.web.align_service import ensure_alignment
+        from vlgp.web.align_service import start_alignment
         try:
-            return ensure_alignment(index, name)
+            return start_alignment(index, name)
         except SessionNotFound as e:
             raise HTTPException(404, str(e))
         except ValueError as e:
             raise HTTPException(422, {'error': str(e)})
+
+    @app.get('/api/sessions/{name}/align/status')
+    def align_status(name: str):
+        from vlgp.web.align_service import alignment_status
+        return alignment_status(name)
+
+    # --------------------------------------------------------- row status
+    @app.get('/api/sessions/{name}/row/{row}')
+    def row_status(name: str, row: int):
+        try:
+            return index.row_status(name, row)
+        except SessionNotFound as e:
+            raise HTTPException(404, str(e))
+        except NoAlignment as e:
+            raise HTTPException(404, str(e))
+        except IndexError as e:
+            raise HTTPException(404, str(e))
 
     # --------------------------------------------------------------- frames
     @app.get('/api/sessions/{name}/frames/{cam}/{row}')

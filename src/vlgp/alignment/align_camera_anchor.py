@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -204,19 +205,31 @@ def build_camera_anchor_alignment(
     anchor: str,
     other_cameras: list[str],
     include_joints: bool,
+    progress_cb: Callable[[str, int, int], None] | None = None,
 ) -> tuple[pd.DataFrame, dict]:
-    """One output row per anchor-camera frame, with interpolated arm poses."""
+    """One output row per anchor-camera frame, with interpolated arm poses.
+
+    ``progress_cb(stage, done, total)`` (optional) reports pipeline progress:
+    stages 'robot' / 'drift' / 'cameras' / 'prepare' / 'grid'.
+    """
+    def _report(stage: str, done: int, total: int) -> None:
+        if progress_cb is not None:
+            progress_cb(stage, int(done), int(total))
+
     arms = load_robot_arms(session_dir)
+    _report('robot', len(arms), 4)
 
     # Fit the PLC-PC drift model on the arm with the most samples.
     ref_arm = max(arms, key=lambda a: len(arms[a]))
     clock_fit, diag = fit_plc_pc_model(arms[ref_arm])
+    _report('drift', 1, 1)
     print(f'PLC-PC drift model fitted on arm{ref_arm}: k={clock_fit.slope:.12f}, b={clock_fit.intercept:.0f} ns, '
           f'residual std={diag["residual_std_ms"]:.3f} ms, max={diag["residual_max_abs_ms"]:.3f} ms')
 
     # Load camera metadata; timestamps mapped to the PLC axis.
     cameras: dict[str, dict] = {}
-    for name in [anchor, *other_cameras]:
+    cam_names = [anchor, *other_cameras]
+    for i, name in enumerate(cam_names):
         meta_path = camera_metadata_path(session_dir, name)
         if not meta_path.exists():
             print(f'{name}: metadata.csv not found, skipping')
@@ -229,6 +242,7 @@ def build_camera_anchor_alignment(
             'df': df,
             'plc': np.asarray([clock_fit.predict(x) for x in pc], dtype=np.float64),
         }
+        _report('cameras', i + 1, len(cam_names))
     if anchor not in cameras:
         raise FileNotFoundError(f'Anchor camera metadata not found: {anchor}')
 
@@ -236,10 +250,12 @@ def build_camera_anchor_alignment(
     # frame — required for 10-min sessions (18k frames x 190k rows otherwise).
     arm_data = {arm_id: prepare_arm_data(arm_df)
                 for arm_id, arm_df in arms.items()}
+    _report('prepare', 1, 1)
 
     anchor_cam = cameras[anchor]
     robot_ts_min = min(arm['timestamp_ns'].min() for arm in arms.values())
     robot_ts_max = max(arm['timestamp_ns'].max() for arm in arms.values())
+    total_rows = len(anchor_cam['df'])
 
     rows = []
     for i, frame_row in anchor_cam['df'].iterrows():
@@ -278,6 +294,8 @@ def build_camera_anchor_alignment(
                     out_row[f'arm{arm_id}_{col}'] = val
 
         rows.append(out_row)
+        if progress_cb is not None and (i % 50 == 0 or i == total_rows - 1):
+            _report('grid', i + 1, total_rows)
 
     df = pd.DataFrame(rows)
     stats = {
