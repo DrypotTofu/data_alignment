@@ -53,6 +53,8 @@
 
 31. **Web 自动对齐生成（2026-08-26，用户需求）**：选中未生成对齐表的 session 时自动生成：新增 `POST /api/sessions/{name}/align`（`vlgp/web/align_service.py`，复用 CLI 同款对齐管线，与 CLI 产出逐字节一致）；幂等（已对齐返回 `already_aligned`）；无机器人数据 422（PLC/ADS 可能未就绪提示）；前端自动触发 + 「未对齐」徽标。回归新增 G 节（幂等/404/422），**40/40 PASS**。附：修复旧 uvicorn 孤儿进程占用 8765 端口问题（job 结束后确认子进程清除）。
 
+32. **对齐进度条 + 四臂机器人状态面板（2026-08-27，用户需求）**：① `build_camera_anchor_alignment` 增可选 `progress_cb`（五阶段），`POST /align` 改异步（立即返回 started），前端轮询 `/align/status` 显示进度条；② 新增 `/row/{row}` 四臂姿态快照 + 前端四臂切换 Tab + 状态面板（欧拉角前端换算）；③ 修复 422 错误消息提取与 `enumerate(iterrows())` 回归 bug（测试即捕获）。回归新增 H 节，**43/43 PASS**。附：再次发现并清理旧 uvicorn 孤儿占用 8765（job_kill 只杀 wrapper，子进程需手动检查）。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。
