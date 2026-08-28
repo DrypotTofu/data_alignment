@@ -55,6 +55,8 @@
 
 32. **对齐进度条 + 四臂机器人状态面板（2026-08-27，用户需求）**：① `build_camera_anchor_alignment` 增可选 `progress_cb`（五阶段），`POST /align` 改异步（立即返回 started），前端轮询 `/align/status` 显示进度条；② 新增 `/row/{row}` 四臂姿态快照 + 前端四臂切换 Tab + 状态面板（欧拉角前端换算）；③ 修复 422 错误消息提取与 `enumerate(iterrows())` 回归 bug（测试即捕获）。回归新增 H 节，**43/43 PASS**。附：再次发现并清理旧 uvicorn 孤儿占用 8765（job_kill 只杀 wrapper，子进程需手动检查）。
 
+33. **T17 完成（2026-08-27，LeRobotDataset v3.0 导出器 + 往返验证 12/12 PASS）**：① 契约核定——pin `lerobot==0.4.4`（PyPI 最新；AGENT_HANDOFF 中 "v0.6.x" 是 HF 文档线编号），读安装包源码核定 v3 schema：`meta/tasks.parquet`（**非** tasks.jsonl）、`data/`+`videos/` 多 episode 合一 Parquet/MP4 分片、`meta/episodes/` 分块 Parquet；官方写入 API `LeRobotDataset.create(..., vcodec=)`→`add_frame`→`save_episode`→`save_episode_tasks`→`finalize`；`timestamp=frame_index/fps` 由库生成（delta_timestamps 的 1/fps 轴）。② 导出器 `src/vlgp/dataset/export_lerobot.py`：state float32[32]/instrument_type int64[4]/active_mask bool[4]/action float32[40]/三路视频，`--repeat/--vcodec/--parallel`，`--out` 已存在拒绝。③ 验证器 `scripts/test/verification/lerobot_roundtrip.py` 5 节 12 项**全 PASS**：官方类零警告加载、state/action max|diff|=0、时间戳 1/fps 轴、三路图像解码 vs 源 PNG（worst mean|diff| 2.35~3.28，纯 yuv420p crf30 噪声）、delta_timestamps 窗口采样、3 episode 分片 2031 帧。④ 修复两 bug：解码帧是 CHW float32（测试比较逻辑误判形状）；导出器 `cv2.imread` BGR 需转 RGB（lerobot 视频管线全程 RGB，修复前 R/B 互换 worst 15.96~23.23）。产物 `datasets/srth_demo_20260821`（session 20260821_123455 的 srth_episode ×3，h264）。注：视频编解码与数据集文件需 danger-full-access，导出+验证须同一权限上下文。`environment.yml` 已加 `lerobot==0.4.4`。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。
@@ -72,6 +74,7 @@
 - T14 ✅（2026-08-26）：instrument_type 透传完成（合成验证 + 真实回归通过：arm2=内窥镜）。
 - T15：片段级任务层级与指令标注（⏸️ 待 PM 定义受控词表 `task_hierarchy.yaml`；建议 T10-评审后实施）。
 - T16：MDH FK + R_bs 解算（优先级已下调，不阻塞；delta_rot_6d 已按 PM 决策改为局部系约定并回归 ✅；FK 映射与 R_bs 待单关节运动数据 + 工程师确认，协议见 T16 备忘第四节）。
+- T17 ✅（2026-08-27）：LeRobotDataset v3.0 导出器 + 往返验证 12/12 PASS（`src/vlgp/dataset/export_lerobot.py` + `scripts/test/verification/lerobot_roundtrip.py`；lerobot==0.4.4 已入 environment.yml；产物 `datasets/srth_demo_20260821`）。
 - 已确认（2026-08-16）：四元数顺序 wxyz；PLC 输出基座系 + 镜系**位置**两套，动作标签 delta_pos 用镜系；**PLC 无镜系四元数**（delta_rot_6d 用基座系四元数按局部系约定计算，对常值旋转不变）。
 - 暂缓：EL6688 PTP、DAgger GUI、存储格式迁移（本阶段范围外）。
 

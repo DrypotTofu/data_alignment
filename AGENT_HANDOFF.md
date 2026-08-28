@@ -230,11 +230,11 @@
 
 > **SRT 论文立场调研（PM，2026-08-21）**：SRT（2407.12998）全文**无任何标定环节**（"calibration" 零出现），且明确假设数据**未做手眼标定**采集（对齐临床大规模数据场景），改用 relative action 对不准的绝对运动学免疫：delta 平移定义在**内窥镜末端系**、delta 旋转定义在**当前末端执行器系**（"hybrid relative actions"）。推论：① 本任务（R_bs 解算）是**数据质量增强项而非对齐 SRT 的必要步骤**，优先级下调，不阻塞 T5/T6 与正式采集；② **优先核对项**：`build_srth_dataset.py` 的 `delta_rot_6d` 若算的是局部系相对旋转（`q_t⁻¹ ⊗ q_{t+1}`，即 SRT 的末端系约定），则与基座/镜系常值旋转无关，T9 遗留风险直接消解——实施 T16 前先核对此约定并与 SRT hybrid 形式对齐。
 
-### T17. 数据集格式对齐 LeRobotDataset v3.0（新立项 2026-08-26，PM 决策）
+### T17. 数据集格式对齐 LeRobotDataset v3.0（新立项 2026-08-26，PM 决策）✅ 2026-08-27
 
 背景与决策：数据集对外/训练格式采用 **LeRobotDataset v3.0** 规范（lerobot v0.6.x 文档线）。定位：**在 `build_srth_dataset.py` 之后加一层导出器**（session → 内部 episode → LeRobot v3 数据集），不重写采集与对齐管线；SRT-H 内部 episode 格式保留为中间层（标注/裁剪语义都在这层流动）。
 
-v3.0 格式要点（2026-08-26 从 HF 官方文档 `lerobot-dataset-v3` 核对）：
+v3.0 格式要点（2026-08-26 从 HF 官方文档 `lerobot-dataset-v3` 核对；**2026-08-27 以安装包源码核定，见下方实现记录**）：
 
 - **文件式存储**（v2 是每 episode 一个文件）：`data/` 为逐帧 **Parquet 分片**（一个文件含多个 episode）；`videos/` 为每相机 **MP4 分片**（同样多 episode 合一）；
 - **关系型元数据**：`meta/info.json`（schema：features/shapes/dtypes、fps、codebase 版本、路径模板）、`meta/stats.json`（全局 mean/std/min/max，归一化用）、`meta/tasks.jsonl`（自然语言任务 ↔ 整数 ID）、`meta/episodes/`（每 episode 的长度/任务/偏移，分块 Parquet）；
@@ -252,7 +252,15 @@ v3.0 格式要点（2026-08-26 从 HF 官方文档 `lerobot-dataset-v3` 核对�
 
 验收：导出的数据集被未修改的官方 `LeRobotDataset` 零警告加载；往返数值一致；一条完整 session（经 T10 裁剪 + T15 标注）端到端导出成功。
 
-注意：T15 的片段指令（v1 落地前）先用 session 级 `task_instruction` 占位映射 tasks.jsonl，T15 完成后切换为片段级指令。
+**实现记录（2026-08-27，全部完成 ✅）**：
+
+1. **契约核定**：pin `lerobot==0.4.4`（PyPI 最新；PM 注记的 "v0.6.x" 是 HF 文档线编号，PyPI 与源码一致为 0.4.4）；直接读 `site-packages/lerobot/datasets/` 源码核定 schema——v3.0 布局为 `data/chunk-*/file-*.parquet`（多 episode 合一）、`videos/<cam>/chunk-*/file-*.mp4`、`meta/info.json + stats.json + **tasks.parquet**（非 tasks.jsonl，v2 遗留）+ meta/episodes/chunk-*/file-*.parquet`；官方写入 API：`LeRobotDataset.create(..., vcodec=)` → `add_frame(frame)` → `save_episode(parallel_encoding=)` → `meta.save_episode_tasks([...])` → `finalize()`；`validate_frame` 要求 frame 恰好含非 DEFAULT 特征 + `task`，`timestamp`/`frame_index`/`episode_index`/`task_index` 由库内部生成（`timestamp=frame_index/fps`，即 `delta_timestamps` 要求的 1/fps 时间轴）；视频编码器仅接受 lerobot 名（`h264`/`hevc`/`libsvtav1`/`auto`…，`libx264` 非法）；解码侧 `decode_video_frames_torchvision` 返回 **CHW float32 [0,1]**。
+2. **导出器实现**：`src/vlgp/dataset/export_lerobot.py`——`observation.state`（float32[32]，4 臂基座系 pos3+quat4+gripper）、`observation.instrument_type`（int64[4]）、`observation.active_mask`（bool[4]）、`action`（float32[40]，SRT-H 40 维 delta）、`observation.images.camera_arm_{2,1,3}`（视频，endoscope 1280×720 + 腕部 640×480）；`--repeat` 多 episode、`--vcodec h264|libsvtav1|...`、`--parallel` 可选；`--out` 已存在即拒绝（exit 2）；帧源优先 `obs/<stream>/`，否则回退源 session 相机目录（`meta['source_session']` 为 repo 相对路径）。
+3. **往返验证**：`scripts/test/verification/lerobot_roundtrip.py`（5 节 12 项）——官方类零警告加载、帧数/数值精确一致（state/action max|diff|=0）、时间戳 1/fps 轴、三路图像 MP4 解码 vs 源 PNG（修复后 worst mean|diff| 2.35~3.28，纯有损量化噪声）、`delta_timestamps` 窗口采样、≥3 episode 分片与 episodes 元数据。**12/12 PASS**。
+4. **修复的两个实现 bug**（测试即捕获）：① 测试侧把解码帧当 HWC uint8 比较，实际解码为 **CHW float32 [0,1]**（形状误判 → 误报）；② 导出器把 `cv2.imread` 的 **BGR** 数组直接入帧，而 lerobot 视频管线全程 RGB（临时 PNG 字节直存 + `convert("RGB")`）→ 视频 R/B 互换（修复前 worst mean|diff| 15.96~23.23，修复后 <3.3）。导出前 `cv2.cvtColor(COLOR_BGR2RGB)`。
+5. **验证产物**：`datasets/srth_demo_20260821`（session `20260821_123455` 的 srth_episode ×3，677 帧/条，h264，2031 帧）。注：视频编码/解码与数据集文件读写需完整权限（sandbox danger-full-access），导出+验证须在同一权限上下文执行（否则产物不可读）。
+
+注意：T15 的片段指令（v1 落地前）先用 session 级 `task_instruction` 占位映射 tasks.parquet（导出时 `--task` 覆盖），T15 完成后切换为片段级指令。
 
 ### 里程碑达成后立即排期（非阻塞，先立项不实施）
 

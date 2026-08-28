@@ -20,3 +20,5 @@ dependencies:
       - pyqt5>=5.15.0
       - fastapi>=0.141.0
       - uvicorn[standard]>=0.52.0
+      # T17: LeRobotDataset v3.0 exporter/validator pins lerobot (source-verified schema)
+      - lerobot==0.4.4

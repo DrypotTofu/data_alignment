@@ -8,6 +8,7 @@ calibrations/
 scripts/sessions/
 sessions/
 packed/
+datasets/
 scripts/capture/
 scripts/multi_capture/
 camera_test_frames/
