@@ -24,6 +24,14 @@
         <canvas id="cam-1" class="cam wrist" width="320" height="240"></canvas>
         <canvas id="cam-3" class="cam wrist" width="320" height="240"></canvas>
       </section>
+      <div id="curve-bar" hidden>
+        <span class="curve-title">曲线：</span>
+        <button class="curve-btn active" data-arm="all">全部</button>
+        <button class="curve-btn" data-arm="1">arm1</button>
+        <button class="curve-btn" data-arm="2">arm2</button>
+        <button class="curve-btn" data-arm="3">arm3</button>
+        <button class="curve-btn" data-arm="4">arm4</button>
+      </div>
       <canvas id="motion" width="960" height="120"></canvas>
       <section id="robot-panel">
         <div id="arm-tabs"></div>
@@ -32,11 +40,11 @@
       <section id="transport">
         <input type="range" id="slider" min="0" max="0" value="0">
         <div class="buttons">
-          <button id="btn-in" disabled>IN</button>
-          <button id="btn-out" disabled>OUT</button>
-          <button id="btn-prev">◀</button>
-          <button id="btn-play">▶</button>
-          <button id="btn-next">▶|</button>
+          <button id="btn-in" disabled title="设置 IN ( [ )">IN</button>
+          <button id="btn-out" disabled title="设置 OUT ( ] )">OUT</button>
+          <button id="btn-prev" class="tbtn" title="上一帧 ( ← )"></button>
+          <button id="btn-play" class="tbtn play" title="播放 / 暂停 ( 空格 )"></button>
+          <button id="btn-next" class="tbtn" title="下一帧 ( → )"></button>
           <select id="speed" title="播放速度">
             <option value="0.5">0.5x</option>
             <option value="1" selected>1x</option>

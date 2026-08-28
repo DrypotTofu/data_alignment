@@ -39,10 +39,27 @@ body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
 .cam { width: 100%; background: #111; border-radius: 4px; image-rendering: auto; }
 #motion { width: 100%; margin-top: 8px; background: #14171b; border-radius: 6px;
           cursor: crosshair; }
+#curve-bar { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+#curve-bar[hidden] { display: none; }
+#curve-bar .curve-title { font-size: 12px; color: #8fa3bf; margin-right: 2px; }
+.curve-btn { padding: 2px 12px; font-size: 12px; }
+.curve-btn.active { background: #2c5f8a; color: #fff; border-color: #2c5f8a; }
 #transport { margin-top: 8px; }
 #slider { width: 100%; }
 .buttons { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.buttons button { height: 28px; }
+/* fixed-size icon buttons: width never changes between play/pause, so the
+ * mouse stays over the button and the click always lands (no layout shift) */
+.buttons .tbtn { width: 34px; padding: 0; display: inline-flex;
+                 align-items: center; justify-content: center; }
+.buttons .tbtn svg { display: block; }
+.buttons .tbtn.play { background: #2c5f8a; border-color: #3a76b0; color: #fff; }
+.buttons .tbtn.play:hover { background: #356ea0; border-color: #4a86c2; }
+.buttons select { background: #2b3038; color: #d7dae0; border: 1px solid #3a4250;
+                  border-radius: 4px; padding: 4px 6px; font-size: 13px;
+                  height: 28px; }
 button { padding: 4px 12px; border: 1px solid #3a4250; border-radius: 4px;
          background: #2b3038; color: #d7dae0; cursor: pointer; }
+button:hover:not(:disabled) { background: #36404b; border-color: #4a5568; }
 button:disabled { opacity: .4; cursor: default; }
 #trim-info { font-size: 12px; color: #a8b4c2; margin-left: auto; }

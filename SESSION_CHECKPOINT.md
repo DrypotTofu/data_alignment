@@ -57,6 +57,8 @@
 
 33. **T17 完成（2026-08-27，LeRobotDataset v3.0 导出器 + 往返验证 12/12 PASS）**：① 契约核定——pin `lerobot==0.4.4`（PyPI 最新；AGENT_HANDOFF 中 "v0.6.x" 是 HF 文档线编号），读安装包源码核定 v3 schema：`meta/tasks.parquet`（**非** tasks.jsonl）、`data/`+`videos/` 多 episode 合一 Parquet/MP4 分片、`meta/episodes/` 分块 Parquet；官方写入 API `LeRobotDataset.create(..., vcodec=)`→`add_frame`→`save_episode`→`save_episode_tasks`→`finalize`；`timestamp=frame_index/fps` 由库生成（delta_timestamps 的 1/fps 轴）。② 导出器 `src/vlgp/dataset/export_lerobot.py`：state float32[32]/instrument_type int64[4]/active_mask bool[4]/action float32[40]/三路视频，`--repeat/--vcodec/--parallel`，`--out` 已存在拒绝。③ 验证器 `scripts/test/verification/lerobot_roundtrip.py` 5 节 12 项**全 PASS**：官方类零警告加载、state/action max|diff|=0、时间戳 1/fps 轴、三路图像解码 vs 源 PNG（worst mean|diff| 2.35~3.28，纯 yuv420p crf30 噪声）、delta_timestamps 窗口采样、3 episode 分片 2031 帧。④ 修复两 bug：解码帧是 CHW float32（测试比较逻辑误判形状）；导出器 `cv2.imread` BGR 需转 RGB（lerobot 视频管线全程 RGB，修复前 R/B 互换 worst 15.96~23.23）。产物 `datasets/srth_demo_20260821`（session 20260821_123455 的 srth_episode ×3，h264）。注：视频编解码与数据集文件需 danger-full-access，导出+验证须同一权限上下文。`environment.yml` 已加 `lerobot==0.4.4`。
 
+34. **Web 曲线按臂选择 + 播放按钮修复（2026-08-27，用户需求）**：① 运动量曲线新增选臂条「全部/arm1-4」（`#curve-bar`），单臂模式只画该臂 dpos 曲线，arm1 模式附带 gripper 曲线；「全部」模式补画 gripper arm1 蓝线（此前图例有但未画，PyQt5 `_redraw_curve` 口径），图例随选择自适应。② 播放控制器按钮改**内联 SVG 图标**（play/pause/prev/next，固定 34px 宽）——原 `▶/⏸` 字形在中文 Windows 可能渲染为 tofu/emoji，且字形宽度变化导致按钮在 mousedown/mouseup 之间位移、click 丢失 → **播放后点暂停无效**；固定尺寸 + SVG 后无布局跳动，暂停可靠。样式统一：按钮统一高度 28px、hover 态、播放键主题色、select 同风格。静态文件由 FastAPI 磁盘直供，浏览器刷新即生效（已验证 200）。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。

@@ -7,6 +7,25 @@ const PREFETCH = 12;          // frames decoded ahead/behind per camera
 const MOTION_POINTS = 2000;   // motion-curve pixel budget (server downsample)
 const MAX_W = { camera_arm_2: 640, camera_arm_1: 320, camera_arm_3: 320 };
 const CURVE_COLORS = { arm1: '#ffb43c', arm2: '#c8c8c8', arm3: '#78dc78', arm4: '#c8c8c8' };
+const GRIPPER_COLOR = '#7896ff';
+
+// Inline SVG icons for the transport buttons — no font-glyph dependency
+// (text glyphs like ▶/⏸ can render as tofu/emoji on Chinese Windows and
+// their width change between states shifts the button under the mouse,
+// which swallows the click and makes pause unreliable).
+const ICONS = {
+  play: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+        '<path d="M5 3.4v9.2l7.4-4.6z" fill="currentColor"/></svg>',
+  pause: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+         '<rect x="4" y="3.4" width="2.8" height="9.2" rx="1" fill="currentColor"/>' +
+         '<rect x="9.2" y="3.4" width="2.8" height="9.2" rx="1" fill="currentColor"/></svg>',
+  prev: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+        '<path d="M10.6 3.6 5.8 8l4.8 4.4" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  next: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+        '<path d="M5.4 3.6l4.8 4.4-4.8 4.4" fill="none" stroke="currentColor" ' +
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
 
 const state = {
   session: null,
@@ -21,7 +40,9 @@ const state = {
   status: 'pending',
   annotations: null,
   motionRows: [],
-  motionDpos: {},             // arm -> Float array (downsampled)
+  motionDpos: {},             // arm -> Float array (downsampled |dpos|)
+  motionGripper: {},          // arm -> Float array (downsampled gripper_angle)
+  curveArm: 'all',            // curve selection: 'all' | '1' | '2' | '3' | '4'
   arm: 1,                     // arm shown in the robot status panel
   rowStatus: null,            // latest /api/row/{row} payload
   statusTimer: null,          // debounce for row-status fetches
@@ -147,6 +168,7 @@ async function selectSession(name) {
     $('btn-save').disabled = false;
     $('status').disabled = false;
     $('status').value = state.status;
+    $('curve-bar').hidden = false;
     await loadMotion();
     updateStatusLabel();
     updateTrimInfo();
@@ -160,6 +182,7 @@ async function selectSession(name) {
     $('session-name').textContent = name + ' (不可用)';
     $('btn-in').disabled = $('btn-out').disabled = $('btn-save').disabled = true;
     $('status').disabled = true;
+    $('curve-bar').hidden = true;
   }
 }
 
@@ -167,6 +190,7 @@ async function loadMotion() {
   const m = await api(`/api/sessions/${state.session}/alignment?points=${MOTION_POINTS}`);
   state.motionRows = m.rows;
   state.motionDpos = m.dpos || {};
+  state.motionGripper = m.gripper || {};
   drawMotion();
 }
 
@@ -175,9 +199,13 @@ function drawMotion() {
   ctx.clearRect(0, 0, cv.width, cv.height);
   const rows = state.motionRows;
   if (!rows.length) return;
-  const arms = Object.keys(state.motionDpos);
+  const showAll = state.curveArm === 'all';
+  // arm selection: show every arm, or only the chosen one
+  const armKeys = showAll
+    ? Object.keys(state.motionDpos)
+    : (state.motionDpos['arm' + state.curveArm] ? ['arm' + state.curveArm] : []);
   // PyQt5 parity: each series normalised to its own max.
-  arms.forEach((arm) => {
+  for (const arm of armKeys) {
     const v = state.motionDpos[arm];
     const mx = Math.max(...v, 1e-9);
     ctx.strokeStyle = CURVE_COLORS[arm] || '#c8c8c8';
@@ -189,7 +217,21 @@ function drawMotion() {
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
-  });
+  }
+  // gripper arm1 on top (blue) — PyQt5 _redraw_curve draws it too
+  const g = state.motionGripper['arm1'];
+  if (g && g.length && (showAll || state.curveArm === 1)) {
+    const mx = Math.max(...g, 1e-9);
+    ctx.strokeStyle = GRIPPER_COLOR;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < g.length; i++) {
+      const x = (i / (g.length - 1)) * cv.width;
+      const y = cv.height - 6 - (g[i] / mx) * (cv.height - 14);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
   // trim IN/OUT markers
   if (state.trim && state.nRows > 1) {
     for (const [key, color] of [['start_row', 'rgba(120,220,120,0.9)'],
@@ -207,11 +249,17 @@ function drawMotion() {
     ctx.strokeStyle = '#ffffff';
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cv.height); ctx.stroke();
   }
-  // legend
-  const legend = [
-    ['#ffb43c', 'arm1 dpos'], ['#78dc78', 'arm3 dpos'],
-    ['#c8c8c8', 'arm2/4 dpos'], ['#7896ff', 'gripper arm1'],
-  ];
+  // legend reflects the current selection
+  const legend = [];
+  if (showAll) {
+    legend.push(['#ffb43c', 'arm1 dpos'], ['#78dc78', 'arm3 dpos'],
+                ['#c8c8c8', 'arm2/4 dpos']);
+    if (g && g.length) legend.push([GRIPPER_COLOR, 'gripper arm1']);
+  } else if (armKeys.length) {
+    const arm = armKeys[0];
+    legend.push([CURVE_COLORS[arm] || '#c8c8c8', `${arm} dpos`]);
+    if (arm === 'arm1' && g && g.length) legend.push([GRIPPER_COLOR, 'gripper arm1']);
+  }
   let lx = 8;
   ctx.font = '11px "Microsoft YaHei", sans-serif';
   for (const [color, label] of legend) {
@@ -387,10 +435,10 @@ function playTick() {
 }
 
 function stopPlay() {
-  clearInterval(state.playTimer);
-  state.playTimer = null;
+  if (state.playTimer) { clearInterval(state.playTimer); state.playTimer = null; }
   state.playing = false;
-  $('btn-play').textContent = '▶';
+  const b = $('btn-play');
+  if (b) b.innerHTML = ICONS.play;
 }
 
 function togglePlay() {
@@ -399,7 +447,7 @@ function togglePlay() {
   state.playing = true;
   state.playClock = performance.now();
   state.playAccum = 0;
-  $('btn-play').textContent = '⏸';
+  $('btn-play').innerHTML = ICONS.pause;
   state.playTimer = setInterval(playTick, 33);
 }
 
@@ -411,6 +459,19 @@ $('btn-next').onclick = () => step(1);
 $('btn-play').onclick = togglePlay;
 $('btn-save').onclick = saveAnnotations;
 $('btn-next-session').onclick = nextSession;
+// fixed-size inline SVG icons (no font-glyph tofu, no layout shift on click)
+$('btn-play').innerHTML = ICONS.play;
+$('btn-prev').innerHTML = ICONS.prev;
+$('btn-next').innerHTML = ICONS.next;
+// motion-curve arm selector
+document.querySelectorAll('.curve-btn').forEach((b) => {
+  b.onclick = () => {
+    state.curveArm = b.dataset.arm;   // 'all' | '1' | '2' | '3' | '4'
+    document.querySelectorAll('.curve-btn').forEach((x) =>
+      x.classList.toggle('active', x === b));
+    drawMotion();
+  };
+});
 $('slider').oninput = (e) => { stopPlay(); showRow(parseInt(e.target.value, 10)); };
 $('speed').onchange = (e) => { state.speed = parseFloat(e.target.value); };
 $('status').onchange = (e) => { state.status = e.target.value; updateStatusLabel(); };
