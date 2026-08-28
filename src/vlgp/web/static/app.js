@@ -46,6 +46,8 @@ const state = {
   arm: 1,                     // arm shown in the robot status panel
   rowStatus: null,            // latest /api/row/{row} payload
   statusTimer: null,          // debounce for row-status fetches
+  frameAbort: null,           // AbortController for the in-flight frame batch
+  drawGen: 0,                 // generation counter: stale async draws are dropped
 };
 
 const $ = (id) => document.getElementById(id);
@@ -277,25 +279,37 @@ async function showRow(row) {
   $('slider').value = row;
   $('row-info').textContent = `row ${row} / ${state.nRows - 1}`;
   drawMotion();
+  const gen = ++state.drawGen;
+  // cancel any in-flight batch (stale during playback; critical on pause so
+  // the frame fetch that was started just before the click cannot draw after)
+  if (state.frameAbort) state.frameAbort.abort();
+  const ac = new AbortController();
+  state.frameAbort = ac;
   const rows = [];
   for (let r = row - PREFETCH; r <= row + PREFETCH; r++) {
     if (r >= 0 && r < state.nRows) rows.push(r);
   }
   const frames = {};
-  await Promise.all(CAMERAS.map(async (cam) => {
-    const body = { cam, rows, max_width: MAX_W[cam] };
-    const res = await api(`/api/sessions/${state.session}/frames/batch`,
-                          { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body) });
-    frames[cam] = res.images || {};
-  }));
+  try {
+    await Promise.all(CAMERAS.map(async (cam) => {
+      const body = { cam, rows, max_width: MAX_W[cam] };
+      const res = await api(`/api/sessions/${state.session}/frames/batch`,
+                            { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify(body), signal: ac.signal });
+      frames[cam] = res.images || {};
+    }));
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;  // superseded by a newer row / paused
+    return;                                    // preview is best-effort
+  }
+  if (ac.signal.aborted || gen !== state.drawGen) return;  // a newer row took over
   for (const cam of CAMERAS) {
     const img = frames[cam][String(row)];
     if (img) {
       const cv = $(`cam-${cam.slice(-1)}`);
       const ctx = cv.getContext('2d');
       const im = new Image();
-      im.onload = () => { ctx.drawImage(im, 0, 0, cv.width, cv.height); };
+      im.onload = () => { if (gen === state.drawGen) ctx.drawImage(im, 0, 0, cv.width, cv.height); };
       im.src = img;
     }
   }
@@ -431,18 +445,30 @@ function playTick() {
   const stepN = Math.floor(state.playAccum);
   if (stepN < 1) return;
   state.playAccum -= stepN;
-  if (step(stepN)) stopPlay();
+  if (step(stepN)) {
+    stopPlay();
+    showRow(state.nRows - 1);   // stopPlay aborts the in-flight final batch; ensure it renders
+  }
 }
 
 function stopPlay() {
   if (state.playTimer) { clearInterval(state.playTimer); state.playTimer = null; }
   state.playing = false;
+  // cancel the in-flight frame batch so no image is drawn after the stop
+  if (state.frameAbort) { state.frameAbort.abort(); state.frameAbort = null; }
   const b = $('btn-play');
   if (b) b.innerHTML = ICONS.play;
 }
 
 function togglePlay() {
-  if (state.playing) { stopPlay(); return; }
+  if (state.playing) {
+    const snapRow = state.row;
+    stopPlay();
+    // the rendered picture lags the row counter by the fetch latency; snap
+    // the paused frame to the exact row so video and counter agree instantly
+    if (state.nRows > 0) showRow(snapRow);
+    return;
+  }
   if (state.row >= state.nRows - 1) state.row = 0;
   state.playing = true;
   state.playClock = performance.now();
