@@ -56,6 +56,9 @@ const state = {
   preloadTimer: null,         // lookahead preload scheduler handle
   preloadBusy: false,         // preload loop re-entry guard
   preloadGen: 0,              // invalidated on session switch
+  lastMotionRow: -1,          // drawMotion throttle: last row the curve drew
+  lastMotionAt: 0,            // drawMotion throttle: last curve draw timestamp
+  preloadPct: -1,             // last rendered preload percentage (DOM dedup)
 };
 
 const $ = (id) => document.getElementById(id);
@@ -164,6 +167,8 @@ async function selectSession(name) {
   state.frameCache = {};
   state.crit = {};
   state.lastDraw = {};
+  state.preloadPct = -1;
+  $('preload-bar').hidden = true;
   for (const cam of CAMERAS) {
     const cv = $(`cam-${cam.slice(-1)}`);
     if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
@@ -203,6 +208,7 @@ async function selectSession(name) {
     $('btn-in').disabled = $('btn-out').disabled = $('btn-save').disabled = true;
     $('status').disabled = true;
     $('curve-bar').hidden = true;
+    $('preload-bar').hidden = true;
     state.preloadGen += 1;
     state.preloadTimer = null;
     state.frameCache = {};
@@ -314,7 +320,8 @@ function frameCache(cam) {
 // draws, for each camera, the cached frame of the current counter row — or,
 // when the preload has not caught up yet, the nearest cached row before it.
 // The video therefore lags gracefully instead of freezing on cache misses,
-// and rendering never blocks on the network.
+// and rendering never blocks on the network. The same loop drives the
+// preload progress bar.
 function startRenderLoop() {
   if (state.rafId) return;
   const tick = () => {
@@ -337,12 +344,49 @@ function startRenderLoop() {
       cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
       state.lastDraw[cam] = r;
     }
+    updatePreloadBar();
   };
   state.rafId = requestAnimationFrame(tick);
 }
 
 function stopRenderLoop() {
   if (state.rafId) { cancelAnimationFrame(state.rafId); state.rafId = null; }
+}
+
+// Share of the lookahead window [row, row+PRELOAD] already cached, for the
+// least-ready camera (the honest answer to "can I play smoothly yet").
+function preloadProgress() {
+  let worst = 1;
+  for (const cam of CAMERAS) {
+    const c = state.frameCache[cam];
+    const win = Math.min(PRELOAD, Math.max(0, state.nRows - 1 - state.row)) + 1;
+    if (win <= 0) return 1;
+    let have = 0;
+    if (c) {
+      for (let r = state.row; r <= state.row + win - 1; r++) {
+        if (c.has(r)) have++;
+      }
+    }
+    worst = Math.min(worst, have / win);
+  }
+  return worst;
+}
+
+// Progress bar: "预加载 X% · 前方约 N 秒可用" — hidden once the whole
+// lookahead window is warm (smooth playback is guaranteed then). Only
+// touches the DOM when the percentage changes.
+function updatePreloadBar() {
+  const pct = Math.round(preloadProgress() * 100);
+  if (pct === state.preloadPct) return;
+  state.preloadPct = pct;
+  const bar = $('preload-bar'), fill = $('preload-fill'), txt = $('preload-text');
+  if (!bar || !fill || !txt) return;
+  if (pct >= 100) { bar.hidden = true; return; }
+  bar.hidden = false;
+  fill.style.width = pct + '%';
+  fill.classList.toggle('warming', pct < 50);
+  const secs = (pct / 100) * (PRELOAD / 30);
+  txt.textContent = `预加载 ${pct}% · 前方约 ${secs.toFixed(1)} 秒可用`;
 }
 
 // ------------------------------------------------- binary frame batch fetch
@@ -475,10 +519,28 @@ async function preloadStep(gen) {
   finally {
     state.preloadBusy = false;
     if (gen === state.preloadGen && state.session) {
-      // fetch again soon while catching up; idle-poll slowly once warm
-      state.preloadTimer = setTimeout(() => kickPreload(), didWork ? 60 : 300);
+      // pace by how far the window still is from full: catch up fast after a
+      // seek, go gentle while nearly warm (keeps background CPU away from the
+      // renderer during playback)
+      const ahead = preloadProgress();
+      const gap = ahead >= 1 ? 400 : (ahead < 0.35 ? 40 : 150);
+      state.preloadTimer = setTimeout(() => kickPreload(), didWork ? gap : 300);
     }
   }
+}
+
+// Redraw the motion curve at most every ~3 rows (or 150ms) while playing —
+// the marker moves imperceptibly over such a short distance but redrawing
+// ~8000 path segments per 33ms tick adds real main-thread cost on a machine
+// where the server is concurrently encoding preview frames.
+function drawMotionIfNeeded() {
+  const now = performance.now();
+  if (state.playing
+      && Math.abs(state.row - state.lastMotionRow) < 3
+      && now - state.lastMotionAt < 150) return;
+  state.lastMotionRow = state.row;
+  state.lastMotionAt = now;
+  drawMotion();
 }
 
 // Update the playhead: counter, curve marker, cache warming. Rendering is
@@ -488,7 +550,7 @@ function showRow(row) {
   state.row = row;
   $('slider').value = row;
   $('row-info').textContent = `row ${row} / ${state.nRows - 1}`;
-  drawMotion();
+  drawMotionIfNeeded();
   ensureRowCached(row);
   scheduleRowStatus(row);
   kickPreload();

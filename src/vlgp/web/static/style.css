@@ -44,6 +44,14 @@ body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
 #curve-bar .curve-title { font-size: 12px; color: #8fa3bf; margin-right: 2px; }
 .curve-btn { padding: 2px 12px; font-size: 12px; }
 .curve-btn.active { background: #2c5f8a; color: #fff; border-color: #2c5f8a; }
+#preload-bar { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+#preload-bar[hidden] { display: none; }
+.preload-track { flex: 1; height: 6px; background: #2b3038; border-radius: 3px;
+                 overflow: hidden; }
+#preload-fill { height: 100%; width: 0; background: #5fc96f; border-radius: 3px;
+                transition: width .15s; }
+#preload-fill.warming { background: #e0a13c; }
+#preload-text { font-size: 12px; color: #a8b4c2; white-space: nowrap; }
 #transport { margin-top: 8px; }
 #slider { width: 100%; }
 .buttons { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
