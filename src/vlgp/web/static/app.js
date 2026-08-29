@@ -5,7 +5,8 @@
 const CAMERAS = ['camera_arm_2', 'camera_arm_1', 'camera_arm_3'];
 const PREFETCH = 12;          // frames kept behind/around the playhead
 const PRELOAD = 128;          // rows warmed AHEAD of the playhead (smooth playback)
-const FETCH_CHUNK = 32;       // rows per network request per camera
+const FETCH_CHUNK = 16;       // rows per network request per camera (small chunks
+                              // keep each JSON.parse ~10ms — no main-thread bursts)
 const MOTION_POINTS = 2000;   // motion-curve pixel budget (server downsample)
 const MAX_W = { camera_arm_2: 640, camera_arm_1: 320, camera_arm_3: 320 };
 const CURVE_COLORS = { arm1: '#ffb43c', arm2: '#c8c8c8', arm3: '#78dc78', arm4: '#c8c8c8' };
@@ -48,9 +49,10 @@ const state = {
   arm: 1,                     // arm shown in the robot status panel
   rowStatus: null,            // latest /api/row/{row} payload
   statusTimer: null,          // debounce for row-status fetches
-  frameAbort: null,           // AbortController for the in-flight critical-path fetch
-  drawGen: 0,                 // generation counter: stale async draws are dropped
   frameCache: {},             // cam -> Map(row -> decoded Image) preview cache
+  crit: {},                   // cam -> {inFlight} one coalesced critical fetch per cam
+  lastDraw: {},               // cam -> last row actually drawn (render-loop dedup)
+  rafId: null,                // requestAnimationFrame render-loop handle
   preloadTimer: null,         // lookahead preload scheduler handle
   preloadBusy: false,         // preload loop re-entry guard
   preloadGen: 0,              // invalidated on session switch
@@ -160,7 +162,12 @@ async function selectSession(name) {
   state.preloadGen += 1;
   state.preloadTimer = null;
   state.frameCache = {};
-  state.frameAbort = null;
+  state.crit = {};
+  state.lastDraw = {};
+  for (const cam of CAMERAS) {
+    const cv = $(`cam-${cam.slice(-1)}`);
+    if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+  }
   try {
     let info = await api(`/api/sessions/${name}`);
     if (!info.n_rows) {
@@ -199,6 +206,8 @@ async function selectSession(name) {
     state.preloadGen += 1;
     state.preloadTimer = null;
     state.frameCache = {};
+    state.crit = {};
+    state.lastDraw = {};
   }
 }
 
@@ -311,20 +320,93 @@ function cacheImages(cam, images) {
   }
 }
 
-function drawCamFrame(cam, row, gen) {
-  const im = frameCache(cam).get(row);
-  const cv = $(`cam-${cam.slice(-1)}`);
-  if (!cv || !im) return;
-  const ctx = cv.getContext('2d');
-  if (im.complete && im.naturalWidth > 0) {
-    if (gen === state.drawGen) ctx.drawImage(im, 0, 0, cv.width, cv.height);
-  } else {
-    im.onload = () => { if (gen === state.drawGen) ctx.drawImage(im, 0, 0, cv.width, cv.height); };
+// ------------------------------------------------------- render loop (rAF)
+// Rendering is fully decoupled from fetching: a requestAnimationFrame loop
+// draws, for each camera, the cached frame of the current counter row — or,
+// when the preload has not caught up yet, the nearest cached row before it.
+// The video therefore lags gracefully instead of freezing on cache misses,
+// and rendering never blocks on the network.
+function startRenderLoop() {
+  if (state.rafId) return;
+  const tick = () => {
+    state.rafId = requestAnimationFrame(tick);
+    if (!state.session || !state.nRows) return;
+    for (const cam of CAMERAS) {
+      const cache = state.frameCache[cam];
+      if (!cache || !cache.size) continue;
+      let r = state.row;
+      while (r >= 0 && !cache.has(r)) r--;
+      if (r < 0) continue;
+      const im = cache.get(r);
+      const cv = $(`cam-${cam.slice(-1)}`);
+      if (!cv) continue;
+      if (!(im.complete && im.naturalWidth > 0)) {
+        im.addEventListener('load', () => { state.lastDraw[cam] = -1; }, { once: true });
+        continue;
+      }
+      if (state.lastDraw[cam] === r) continue;
+      cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+      state.lastDraw[cam] = r;
+    }
+  };
+  state.rafId = requestAnimationFrame(tick);
+}
+
+function stopRenderLoop() {
+  if (state.rafId) { cancelAnimationFrame(state.rafId); state.rafId = null; }
+}
+
+// ----------------------------------------- critical-path fetch (per camera)
+// Fills the playhead row (plus a few ahead) as soon as it is needed. One
+// in-flight batch per camera; never aborted by subsequent ticks, so during
+// catch-up frames keep arriving and the render loop just shows the latest
+// available one. Self-heals: when a fetch finishes and the current row is
+// still missing, it immediately fetches again.
+function criticalFetch(cam, row) {
+  const c = state.crit[cam] || (state.crit[cam] = { inFlight: false, failStreak: 0 });
+  if (c.inFlight) return;
+  c.inFlight = true;
+  const sess = state.session;
+  (async () => {
+    let added = 0;
+    try {
+      const rows = [];
+      for (let r = row; r <= Math.min(state.nRows - 1, row + 4); r++) {
+        if (!frameCache(cam).has(r)) rows.push(r);
+      }
+      if (rows.length && state.session === sess) {
+        const body = { cam, rows, max_width: MAX_W[cam] };
+        const res = await api(`/api/sessions/${sess}/frames/batch`,
+                              { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(body) });
+        if (state.session === sess) {          // never cache into a new session
+          const before = frameCache(cam).size;
+          cacheImages(cam, res.images || {});
+          added = frameCache(cam).size - before;
+        }
+      }
+    } catch { /* preview is best-effort */ }
+    finally {
+      c.inFlight = false;
+      if (added > 0) c.failStreak = 0; else c.failStreak += 1;
+      // self-heal while playing: if the playhead outran the fetched window,
+      // immediately fetch its row (bounded so a broken session cannot loop)
+      const heal = state.playing && state.session === sess
+        && c.failStreak < 8 && state.row > row + 4
+        && !frameCache(cam).has(state.row);
+      if (heal) criticalFetch(cam, state.row);
+    }
+  })();
+}
+
+function ensureRowCached(row) {
+  for (const cam of CAMERAS) {
+    if (!frameCache(cam).has(row)) criticalFetch(cam, row);
   }
 }
 
 // start (or continue) the lookahead preloader; re-entry is guarded by
-// preloadBusy so rapid showRow ticks cannot stack overlapping fetches
+// preloadBusy so rapid row changes cannot stack overlapping fetches
 function kickPreload() {
   if (state.preloadBusy || !state.session) return;
   state.preloadBusy = true;
@@ -332,6 +414,7 @@ function kickPreload() {
 }
 
 async function preloadStep(gen) {
+  let didWork = false;
   try {
     if (gen !== state.preloadGen || !state.session) return;
     const row = state.row;
@@ -343,6 +426,7 @@ async function preloadStep(gen) {
       const miss = [];
       for (let r = lo; r <= hi; r++) if (!c.has(r)) miss.push(r);
       if (!miss.length) continue;
+      didWork = true;
       jobs.push(fetchChunk(cam, miss.slice(0, FETCH_CHUNK), gen));
     }
     if (jobs.length) await Promise.all(jobs);
@@ -356,7 +440,8 @@ async function preloadStep(gen) {
   finally {
     state.preloadBusy = false;
     if (gen === state.preloadGen && state.session) {
-      state.preloadTimer = setTimeout(() => kickPreload(), 120);
+      // fetch again soon while catching up; idle-poll slowly once warm
+      state.preloadTimer = setTimeout(() => kickPreload(), didWork ? 60 : 300);
     }
   }
 }
@@ -371,35 +456,15 @@ async function fetchChunk(cam, rows, gen) {
   } catch { /* best effort */ }
 }
 
-async function showRow(row) {
+// Update the playhead: counter, curve marker, cache warming. Rendering is
+// handled by the rAF loop, so this never waits on the network.
+function showRow(row) {
   row = Math.max(0, Math.min(state.nRows - 1, row));
   state.row = row;
   $('slider').value = row;
   $('row-info').textContent = `row ${row} / ${state.nRows - 1}`;
   drawMotion();
-  const gen = ++state.drawGen;
-  const missing = CAMERAS.filter((cam) => !frameCache(cam).has(row));
-  if (missing.length) {
-    // critical path: fetch only the current row, only for uncached cams
-    // (steady playback hits the cache and makes no request at all)
-    if (state.frameAbort) state.frameAbort.abort();
-    const ac = new AbortController();
-    state.frameAbort = ac;
-    try {
-      await Promise.all(missing.map(async (cam) => {
-        const body = { cam, rows: [row], max_width: MAX_W[cam] };
-        const res = await api(`/api/sessions/${state.session}/frames/batch`,
-                              { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(body), signal: ac.signal });
-        if (!ac.signal.aborted) cacheImages(cam, res.images || {});
-      }));
-    } catch (e) {
-      if (e && e.name === 'AbortError') return;  // superseded by a newer row / paused
-      return;                                    // preview is best-effort
-    }
-    if (ac.signal.aborted || gen !== state.drawGen) return;  // a newer row took over
-  }
-  for (const cam of CAMERAS) drawCamFrame(cam, row, gen);
+  ensureRowCached(row);
   scheduleRowStatus(row);
   kickPreload();
 }
@@ -414,7 +479,9 @@ async function fetchRowStatus(row) {
 
 function scheduleRowStatus(row) {
   clearTimeout(state.statusTimer);
-  state.statusTimer = setTimeout(() => fetchRowStatus(row), 150);
+  // the side panel is secondary during playback — refresh less often then
+  const delay = state.playing ? 400 : 150;
+  state.statusTimer = setTimeout(() => fetchRowStatus(row), delay);
 }
 
 function buildArmTabs() {
@@ -535,15 +602,13 @@ function playTick() {
   state.playAccum -= stepN;
   if (step(stepN)) {
     stopPlay();
-    showRow(state.nRows - 1);   // stopPlay aborts the in-flight final batch; ensure it renders
+    showRow(state.nRows - 1);   // ensure the final row is fetched and rendered
   }
 }
 
 function stopPlay() {
   if (state.playTimer) { clearInterval(state.playTimer); state.playTimer = null; }
   state.playing = false;
-  // cancel the in-flight frame batch so no image is drawn after the stop
-  if (state.frameAbort) { state.frameAbort.abort(); state.frameAbort = null; }
   const b = $('btn-play');
   if (b) b.innerHTML = ICONS.play;
 }
@@ -552,9 +617,9 @@ function togglePlay() {
   if (state.playing) {
     const snapRow = state.row;
     stopPlay();
-    // the rendered picture lags the row counter by the fetch latency; snap
-    // the paused frame to the exact row so video and counter agree instantly
-    if (state.nRows > 0) showRow(snapRow);
+    // the render loop shows the nearest cached frame; make sure the exact
+    // paused row is fetched so the picture settles on it (cache hit = no-op)
+    if (state.nRows > 0) ensureRowCached(snapRow);
     return;
   }
   if (state.row >= state.nRows - 1) state.row = 0;
@@ -613,3 +678,4 @@ document.addEventListener('keydown', (e) => {
 });
 
 loadSessions();
+startRenderLoop();
