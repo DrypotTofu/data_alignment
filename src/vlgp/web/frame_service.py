@@ -12,6 +12,7 @@ Performance (measured 2026-08-28 on a 720p/480p session):
 """
 from __future__ import annotations
 
+import struct
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
@@ -59,6 +60,31 @@ class FrameService:
             if item is not None:
                 out[item[0]] = item[1]
         return out
+
+    def batch_bin(self, session: str, cam: str, rows: list[int],
+                  max_width: int = DEFAULT_MAX_WIDTH) -> bytes:
+        """Binary frame batch: int32 count, then per image int32 row, int32
+        length, raw JPEG bytes (little-endian).
+
+        The web player uses this instead of the base64-JSON batch: the client
+        parses the ArrayBuffer and builds Blob/object URLs directly, keeping
+        the main thread free of JSON.parse/base64 work during playback.
+        """
+        if not rows:
+            return struct.pack('<i', 0)
+
+        def one(r: int):
+            try:
+                return int(r), self.jpeg(session, cam, int(r), max_width)
+            except (IndexError, FileNotFoundError, ValueError):
+                return None
+
+        items = [it for it in _EXECUTOR.map(one, rows) if it is not None]
+        out = bytearray(struct.pack('<i', len(items)))
+        for row, data in items:
+            out += struct.pack('<ii', row, len(data))
+            out += data
+        return bytes(out)
 
 
 _EXECUTOR = ThreadPoolExecutor(max_workers=_BATCH_WORKERS)

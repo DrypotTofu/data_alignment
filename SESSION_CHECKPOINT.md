@@ -65,6 +65,8 @@
 
 37. **播放仍卡顿 → 渲染/取帧彻底解耦重构（2026-08-28，用户反馈第二轮）**：根因定位——① 播放中每 33ms tick 若缓存未命中（首屏填充期/跳转后），关键路径逐 tick 补拉会**互相 abort**（新 tick 33ms 后取消旧 fetch）→ 帧永远不完成 → **画面冻结**；② 3 路并行 32 行大块 JSON 几乎同时返回 → 主线程连续 `JSON.parse` 40-60ms 突发。重构 `app.js`：① **rAF 渲染循环**（`startRenderLoop`）与取帧解耦——每帧从缓存画"当前行或最近的 ≤ 当前行缓存帧"，预加载没跟上时**优雅滞后而非冻结**，渲染永不阻塞网络；`lastDraw` 去重（每行每相机只画一次）。② **关键路径取帧**（`criticalFetch`）：每相机合并单飞行中请求（不再逐 tick abort），播放中播放头跑出窗口自动自愈续拉（failStreak<8 防坏 session 死循环），**会话切换防护**（在途旧 session 响应不得写入新 session 缓存）。③ 预加载小块 `FETCH_CHUNK 32→16`（单次 JSON ~750KB → parse ~12ms，三路完成时间错开不再成突发），空闲节流 300ms。④ 播放中 row-status 面板降频 150→400ms。WebP 实测载荷减半但编码慢 20 倍（拖垮冷吞吐），未采用（探针 `probe_codec_sizes.py`）。node 语法检查通过；仅前端改动，**刷新浏览器生效**。
 
+38. **卡顿第三轮：实测定位 + 二进制取帧 + seek 快速首画（2026-08-28，用户反馈：切换后 0.5-1s 不流畅、拖动时间轴看不到目标帧）**：**实测**（`probe_client_pattern.py`）——预加载串行填充 **55-57 行/s**（>30 行/s 播放，架构能跟上）；**冷盘随机 seek 5 行×3 相机要 772ms**（20GB session 冷 PNG 随机读 ~51ms/行，为直接病因）；row-status 仅 10.6ms。**修复**：① 服务端新增 **`POST /frames/batch-bin` 二进制批量端点**（`FrameService.batch_bin`，int32 count + 每图 row/len/JPEG 原始字节）——客户端 `fetchChunk` 改 `arrayBuffer`→`Blob`→`objectURL`→Image，**主线程每步成本 ~30ms JSON.parse → ~1ms**（`check_batch_bin_js.mjs` 用 Node 对真实服务端验证解析正确、JPEG 魔数 ffd8）。② **关键路径两段式**：先单行目标帧（冷 seek 首画 ~150ms），再补 [row+1..row+16] 窗口（seek 后 0.5s 播放有帧可用，实测 16 行×3 相机冷 423ms，较原 5 行 772ms 摊平随机读）；**目标排队改"最新覆盖"**（修复向后拖动 target 不下降的 bug），`c.target !== row || playing` 触发续拉。③ **预加载播放头向前优先**（先补 row..hi 再补 lo..row-1，seek 后立即暖当前行前方）。④ 缓存淘汰时 `URL.revokeObjectURL`。实测：预加载 57 行/s、seek 16 行窗口 423ms、热 seek 8ms。**注意：frame_service.py/app.py 属后端改动，需重启服务**；app.js 刷新即生效。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。

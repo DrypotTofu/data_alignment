@@ -5,8 +5,8 @@
 const CAMERAS = ['camera_arm_2', 'camera_arm_1', 'camera_arm_3'];
 const PREFETCH = 12;          // frames kept behind/around the playhead
 const PRELOAD = 128;          // rows warmed AHEAD of the playhead (smooth playback)
-const FETCH_CHUNK = 16;       // rows per network request per camera (small chunks
-                              // keep each JSON.parse ~10ms — no main-thread bursts)
+const FETCH_CHUNK = 16;       // rows per network request per camera
+const CRIT_WINDOW = 16;       // rows fetched per critical-path request (seek)
 const MOTION_POINTS = 2000;   // motion-curve pixel budget (server downsample)
 const MAX_W = { camera_arm_2: 640, camera_arm_1: 320, camera_arm_3: 320 };
 const CURVE_COLORS = { arm1: '#ffb43c', arm2: '#c8c8c8', arm3: '#78dc78', arm4: '#c8c8c8' };
@@ -309,17 +309,6 @@ function frameCache(cam) {
   return c;
 }
 
-function cacheImages(cam, images) {
-  const c = frameCache(cam);
-  for (const [r, url] of Object.entries(images || {})) {
-    const row = Number(r);
-    if (c.has(row)) continue;
-    const im = new Image();
-    im.src = url;
-    c.set(row, im);
-  }
-}
-
 // ------------------------------------------------------- render loop (rAF)
 // Rendering is fully decoupled from fetching: a requestAnimationFrame loop
 // draws, for each camera, the cached frame of the current counter row — or,
@@ -356,47 +345,83 @@ function stopRenderLoop() {
   if (state.rafId) { cancelAnimationFrame(state.rafId); state.rafId = null; }
 }
 
+// ------------------------------------------------- binary frame batch fetch
+// Uses /frames/batch-bin (raw JPEGs) -> Blob -> object URL -> Image. The
+// ArrayBuffer arrives without base64/JSON, so a preload step costs ~1ms on
+// the main thread instead of ~30ms of JSON.parse. The cache Map is captured
+// at call time, so a response that lands after a session switch writes into
+// the discarded old Map and can never pollute the new session.
+async function fetchChunk(cam, rows, sess) {
+  const cache = frameCache(cam);
+  try {
+    const r = await fetch(`/api/sessions/${sess}/frames/batch-bin`,
+                          { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ cam, rows, max_width: MAX_W[cam] }) });
+    if (!r.ok) return 0;
+    const buf = new Uint8Array(await r.arrayBuffer());
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const count = dv.getInt32(0, true);
+    let off = 4, added = 0;
+    for (let i = 0; i < count; i++) {
+      const row = dv.getInt32(off, true);
+      const len = dv.getInt32(off + 4, true);
+      off += 8;
+      const bytes = buf.subarray(off, off + len);
+      off += len;
+      if (cache.has(row)) continue;
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
+      const im = new Image();
+      im._url = url;                       // revoked on eviction
+      im.src = url;
+      cache.set(row, im);
+      added++;
+    }
+    return added;
+  } catch { return 0; }
+}
+
 // ----------------------------------------- critical-path fetch (per camera)
-// Fills the playhead row (plus a few ahead) as soon as it is needed. One
-// in-flight batch per camera; never aborted by subsequent ticks, so during
-// catch-up frames keep arriving and the render loop just shows the latest
-// available one. Self-heals: when a fetch finishes and the current row is
-// still missing, it immediately fetches again.
+// Fills the playhead row as soon as it is needed, then widens the window for
+// smooth playback right after a seek. Targets queue up: while a fetch is in
+// flight, newer requests only update the target (latest wins — forward AND
+// backward), and the fetch re-runs for the latest target on completion, so a
+// rapid slider drag converges on the final position whether playing or not.
 function criticalFetch(cam, row) {
-  const c = state.crit[cam] || (state.crit[cam] = { inFlight: false, failStreak: 0 });
+  const c = state.crit[cam] || (state.crit[cam] = { inFlight: false, target: -1, failStreak: 0 });
+  c.target = row;               // latest requested row wins (seek both ways)
   if (c.inFlight) return;
   c.inFlight = true;
+  runCritical(cam, c);
+}
+
+async function runCritical(cam, c) {
   const sess = state.session;
-  (async () => {
-    let added = 0;
-    try {
+  let added = 0;
+  try {
+    const row = c.target;
+    // stage 1: the exact target row alone — first paint as fast as possible
+    if (state.session === sess && !frameCache(cam).has(row)) {
+      added += await fetchChunk(cam, [row], sess);
+    }
+    // stage 2: widen ahead of the playhead so playback after the seek is smooth
+    if (state.session === sess) {
       const rows = [];
-      for (let r = row; r <= Math.min(state.nRows - 1, row + 4); r++) {
+      for (let r = row + 1; r <= Math.min(state.nRows - 1, row + CRIT_WINDOW); r++) {
         if (!frameCache(cam).has(r)) rows.push(r);
       }
-      if (rows.length && state.session === sess) {
-        const body = { cam, rows, max_width: MAX_W[cam] };
-        const res = await api(`/api/sessions/${sess}/frames/batch`,
-                              { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(body) });
-        if (state.session === sess) {          // never cache into a new session
-          const before = frameCache(cam).size;
-          cacheImages(cam, res.images || {});
-          added = frameCache(cam).size - before;
-        }
-      }
-    } catch { /* preview is best-effort */ }
-    finally {
-      c.inFlight = false;
-      if (added > 0) c.failStreak = 0; else c.failStreak += 1;
-      // self-heal while playing: if the playhead outran the fetched window,
-      // immediately fetch its row (bounded so a broken session cannot loop)
-      const heal = state.playing && state.session === sess
-        && c.failStreak < 8 && state.row > row + 4
-        && !frameCache(cam).has(state.row);
-      if (heal) criticalFetch(cam, state.row);
+      if (rows.length) added += await fetchChunk(cam, rows, sess);
     }
-  })();
+  } catch { /* preview is best-effort */ }
+  finally {
+    c.inFlight = false;
+    if (added > 0) c.failStreak = 0; else c.failStreak += 1;
+    // re-run for a newer queued target, or while playing and the playhead
+    // outran the window (bounded so a broken session cannot spin forever)
+    const need = state.session === sess && c.failStreak < 8
+      && !frameCache(cam).has(state.row)
+      && (c.target !== row || state.playing);
+    if (need) runCritical(cam, c);
+  }
 }
 
 function ensureRowCached(row) {
@@ -423,18 +448,28 @@ async function preloadStep(gen) {
     const jobs = [];
     for (const cam of CAMERAS) {
       const c = frameCache(cam);
+      // forward from the playhead first (covers the video about to be seen),
+      // then the behind-window — after a seek the playhead row is filled
+      // before rows before it
       const miss = [];
-      for (let r = lo; r <= hi; r++) if (!c.has(r)) miss.push(r);
+      for (let r = row; r <= hi; r++) if (!c.has(r)) miss.push(r);
+      for (let r = lo; r < row; r++) if (!c.has(r)) miss.push(r);
       if (!miss.length) continue;
       didWork = true;
-      jobs.push(fetchChunk(cam, miss.slice(0, FETCH_CHUNK), gen));
+      jobs.push(fetchChunk(cam, miss.slice(0, FETCH_CHUNK), state.session));
     }
     if (jobs.length) await Promise.all(jobs);
     if (gen !== state.preloadGen) return;
     // bound memory: drop rows outside the current window (stale after seeks)
     for (const cam of CAMERAS) {
       const c = frameCache(cam);
-      for (const k of Array.from(c.keys())) if (k < lo || k > hi) c.delete(k);
+      for (const k of Array.from(c.keys())) {
+        if (k < lo || k > hi) {
+          const im = c.get(k);
+          c.delete(k);
+          if (im && im._url) URL.revokeObjectURL(im._url);
+        }
+      }
     }
   } catch { /* preload is best-effort */ }
   finally {
@@ -444,16 +479,6 @@ async function preloadStep(gen) {
       state.preloadTimer = setTimeout(() => kickPreload(), didWork ? 60 : 300);
     }
   }
-}
-
-async function fetchChunk(cam, rows, gen) {
-  try {
-    const body = { cam, rows, max_width: MAX_W[cam] };
-    const res = await api(`/api/sessions/${state.session}/frames/batch`,
-                          { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body) });
-    if (gen === state.preloadGen) cacheImages(cam, res.images || {});
-  } catch { /* best effort */ }
 }
 
 // Update the playhead: counter, curve marker, cache warming. Rendering is

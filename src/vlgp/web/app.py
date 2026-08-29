@@ -150,6 +150,20 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
             raise HTTPException(404, str(e))
         return {'images': images}
 
+    @app.post('/api/sessions/{name}/frames/batch-bin')
+    def frames_batch_bin(name: str, body: BatchIn):
+        """Binary frame batch (see FrameService.batch_bin) for the web
+        player's preload/critical fetches — no base64/JSON on the main
+        thread."""
+        if body.cam not in CAMERA_ORDER:
+            raise HTTPException(404, f'unknown camera {body.cam!r}')
+        try:
+            data = frames.batch_bin(name, body.cam, body.rows, body.max_width)
+        except (SessionNotFound, NoAlignment) as e:
+            raise HTTPException(404, str(e))
+        return Response(content=data,
+                        media_type='application/octet-stream')
+
     # ---------------------------------------------------------- annotations
     @app.get('/api/sessions/{name}/annotations')
     def get_annotations(name: str):
