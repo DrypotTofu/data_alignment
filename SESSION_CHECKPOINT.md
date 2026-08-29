@@ -61,6 +61,8 @@
 
 35. **播放暂停即时性修复（2026-08-27，用户反馈：暂停有延迟）**：根因——播放是 33ms 定时器驱动、每 tick 异步 `frames/batch` 取帧，点暂停时**在途 fetch 无法取消**，会在暂停后继续完成再画一帧；且播放中慢请求可能晚于新 tick 绘制（画面回跳/滞后计数器 1-3 帧）。修复：`showRow` 用 **AbortController**（新行接管或 `stopPlay` 时取消在途批次）+ **drawGen 代数守卫**（过期异步结果不绘制）；`togglePlay` 暂停分支补拉当前行使**画面与计数器即时对齐**；播放到末尾时补渲染最后一行。node 语法检查通过，服务已供新文件（浏览器刷新生效）。
 
+36. **播放丝滑度：客户端帧缓存 + 前瞻预加载 + 服务端并行编码（2026-08-28，用户需求：切换 session 预加载视频）**：实测定位瓶颈——旧实现每 33ms tick 全量重拉 ±12 行窗口（75 张图/tick，HTTP 冷编码 arm2 ~40ms/行）→ 画面实际只有 3-5fps。**服务端** `frame_service.py`：① `batch()` 改 **ThreadPoolExecutor(4) 并行编码**（实测冷路径 17→5.9ms/行 fps_check、21.8→9.9ms/行 大 session；HTTP 端 ~66 行/s ≫ 30 行/s）；② JPEG LRU 768→2048。**客户端** `app.js`：① **持久帧缓存** `frameCache`（cam→Map(row→Image)，解码后的 Image 对象复用）——播放 tick 命中缓存**零请求**直接绘制；② **前瞻预加载循环**（`kickPreload`/`preloadStep`，busy 守卫防堆积）：保持 [row-12, row+128] 窗口温热，切换 session 即从 row 0 开始预填（首次 showRow 即触发），逐步 32 行/请求/相机、步间隔 120ms，窗口外行自动淘汰（内存 ≈141 行×3 相机≈10MB）；③ 关键路径只补拉**当前行缺失相机**（跳转场景），AbortController+drawGen 语义保留。探针 `scripts/test/probes/probe_preview_cost.py`、`probe_reduced_decode.py`（结论：`IMREAD_REDUCED_COLOR_2` 半分辨率解码对 720p PNG 无提速，未采用）。**注意：frame_service.py 属后端改动，用户需重启服务**；app.js 刷新即生效。
+
 ## 待办（执行顺序与验收标准见 `AGENT_HANDOFF.md`）
 
 - T1 ✅（2026-08-16）：gripper 量程/方向反推完成，方向待实测确认。

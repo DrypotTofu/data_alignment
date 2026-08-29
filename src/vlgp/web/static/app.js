@@ -3,7 +3,9 @@
 'use strict';
 
 const CAMERAS = ['camera_arm_2', 'camera_arm_1', 'camera_arm_3'];
-const PREFETCH = 12;          // frames decoded ahead/behind per camera
+const PREFETCH = 12;          // frames kept behind/around the playhead
+const PRELOAD = 128;          // rows warmed AHEAD of the playhead (smooth playback)
+const FETCH_CHUNK = 32;       // rows per network request per camera
 const MOTION_POINTS = 2000;   // motion-curve pixel budget (server downsample)
 const MAX_W = { camera_arm_2: 640, camera_arm_1: 320, camera_arm_3: 320 };
 const CURVE_COLORS = { arm1: '#ffb43c', arm2: '#c8c8c8', arm3: '#78dc78', arm4: '#c8c8c8' };
@@ -46,8 +48,12 @@ const state = {
   arm: 1,                     // arm shown in the robot status panel
   rowStatus: null,            // latest /api/row/{row} payload
   statusTimer: null,          // debounce for row-status fetches
-  frameAbort: null,           // AbortController for the in-flight frame batch
+  frameAbort: null,           // AbortController for the in-flight critical-path fetch
   drawGen: 0,                 // generation counter: stale async draws are dropped
+  frameCache: {},             // cam -> Map(row -> decoded Image) preview cache
+  preloadTimer: null,         // lookahead preload scheduler handle
+  preloadBusy: false,         // preload loop re-entry guard
+  preloadGen: 0,              // invalidated on session switch
 };
 
 const $ = (id) => document.getElementById(id);
@@ -150,6 +156,11 @@ async function selectSession(name) {
   state.row = 0;
   state.playing = false;
   stopPlay();
+  // invalidate the previous session's preload/cache before loading the new one
+  state.preloadGen += 1;
+  state.preloadTimer = null;
+  state.frameCache = {};
+  state.frameAbort = null;
   try {
     let info = await api(`/api/sessions/${name}`);
     if (!info.n_rows) {
@@ -185,6 +196,9 @@ async function selectSession(name) {
     $('btn-in').disabled = $('btn-out').disabled = $('btn-save').disabled = true;
     $('status').disabled = true;
     $('curve-bar').hidden = true;
+    state.preloadGen += 1;
+    state.preloadTimer = null;
+    state.frameCache = {};
   }
 }
 
@@ -273,6 +287,90 @@ function drawMotion() {
   }
 }
 
+// --------------------------------------------------- frame cache + preload
+// Decoded previews are cached client-side (cam -> Map(row -> Image)) so a
+// playback tick draws instantly from memory instead of round-tripping the
+// server. A background lookahead loop keeps [row-PREFETCH, row+PRELOAD]
+// warmed; the server encodes batches in parallel (~190 rows/s), far above
+// the 30 rows/s playback rate.
+
+function frameCache(cam) {
+  let c = state.frameCache[cam];
+  if (!c) { c = new Map(); state.frameCache[cam] = c; }
+  return c;
+}
+
+function cacheImages(cam, images) {
+  const c = frameCache(cam);
+  for (const [r, url] of Object.entries(images || {})) {
+    const row = Number(r);
+    if (c.has(row)) continue;
+    const im = new Image();
+    im.src = url;
+    c.set(row, im);
+  }
+}
+
+function drawCamFrame(cam, row, gen) {
+  const im = frameCache(cam).get(row);
+  const cv = $(`cam-${cam.slice(-1)}`);
+  if (!cv || !im) return;
+  const ctx = cv.getContext('2d');
+  if (im.complete && im.naturalWidth > 0) {
+    if (gen === state.drawGen) ctx.drawImage(im, 0, 0, cv.width, cv.height);
+  } else {
+    im.onload = () => { if (gen === state.drawGen) ctx.drawImage(im, 0, 0, cv.width, cv.height); };
+  }
+}
+
+// start (or continue) the lookahead preloader; re-entry is guarded by
+// preloadBusy so rapid showRow ticks cannot stack overlapping fetches
+function kickPreload() {
+  if (state.preloadBusy || !state.session) return;
+  state.preloadBusy = true;
+  preloadStep(state.preloadGen);
+}
+
+async function preloadStep(gen) {
+  try {
+    if (gen !== state.preloadGen || !state.session) return;
+    const row = state.row;
+    const lo = Math.max(0, row - PREFETCH);
+    const hi = Math.min(state.nRows - 1, row + PRELOAD);
+    const jobs = [];
+    for (const cam of CAMERAS) {
+      const c = frameCache(cam);
+      const miss = [];
+      for (let r = lo; r <= hi; r++) if (!c.has(r)) miss.push(r);
+      if (!miss.length) continue;
+      jobs.push(fetchChunk(cam, miss.slice(0, FETCH_CHUNK), gen));
+    }
+    if (jobs.length) await Promise.all(jobs);
+    if (gen !== state.preloadGen) return;
+    // bound memory: drop rows outside the current window (stale after seeks)
+    for (const cam of CAMERAS) {
+      const c = frameCache(cam);
+      for (const k of Array.from(c.keys())) if (k < lo || k > hi) c.delete(k);
+    }
+  } catch { /* preload is best-effort */ }
+  finally {
+    state.preloadBusy = false;
+    if (gen === state.preloadGen && state.session) {
+      state.preloadTimer = setTimeout(() => kickPreload(), 120);
+    }
+  }
+}
+
+async function fetchChunk(cam, rows, gen) {
+  try {
+    const body = { cam, rows, max_width: MAX_W[cam] };
+    const res = await api(`/api/sessions/${state.session}/frames/batch`,
+                          { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body) });
+    if (gen === state.preloadGen) cacheImages(cam, res.images || {});
+  } catch { /* best effort */ }
+}
+
 async function showRow(row) {
   row = Math.max(0, Math.min(state.nRows - 1, row));
   state.row = row;
@@ -280,40 +378,30 @@ async function showRow(row) {
   $('row-info').textContent = `row ${row} / ${state.nRows - 1}`;
   drawMotion();
   const gen = ++state.drawGen;
-  // cancel any in-flight batch (stale during playback; critical on pause so
-  // the frame fetch that was started just before the click cannot draw after)
-  if (state.frameAbort) state.frameAbort.abort();
-  const ac = new AbortController();
-  state.frameAbort = ac;
-  const rows = [];
-  for (let r = row - PREFETCH; r <= row + PREFETCH; r++) {
-    if (r >= 0 && r < state.nRows) rows.push(r);
-  }
-  const frames = {};
-  try {
-    await Promise.all(CAMERAS.map(async (cam) => {
-      const body = { cam, rows, max_width: MAX_W[cam] };
-      const res = await api(`/api/sessions/${state.session}/frames/batch`,
-                            { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify(body), signal: ac.signal });
-      frames[cam] = res.images || {};
-    }));
-  } catch (e) {
-    if (e && e.name === 'AbortError') return;  // superseded by a newer row / paused
-    return;                                    // preview is best-effort
-  }
-  if (ac.signal.aborted || gen !== state.drawGen) return;  // a newer row took over
-  for (const cam of CAMERAS) {
-    const img = frames[cam][String(row)];
-    if (img) {
-      const cv = $(`cam-${cam.slice(-1)}`);
-      const ctx = cv.getContext('2d');
-      const im = new Image();
-      im.onload = () => { if (gen === state.drawGen) ctx.drawImage(im, 0, 0, cv.width, cv.height); };
-      im.src = img;
+  const missing = CAMERAS.filter((cam) => !frameCache(cam).has(row));
+  if (missing.length) {
+    // critical path: fetch only the current row, only for uncached cams
+    // (steady playback hits the cache and makes no request at all)
+    if (state.frameAbort) state.frameAbort.abort();
+    const ac = new AbortController();
+    state.frameAbort = ac;
+    try {
+      await Promise.all(missing.map(async (cam) => {
+        const body = { cam, rows: [row], max_width: MAX_W[cam] };
+        const res = await api(`/api/sessions/${state.session}/frames/batch`,
+                              { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(body), signal: ac.signal });
+        if (!ac.signal.aborted) cacheImages(cam, res.images || {});
+      }));
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;  // superseded by a newer row / paused
+      return;                                    // preview is best-effort
     }
+    if (ac.signal.aborted || gen !== state.drawGen) return;  // a newer row took over
   }
+  for (const cam of CAMERAS) drawCamFrame(cam, row, gen);
   scheduleRowStatus(row);
+  kickPreload();
 }
 
 // -------------------------------------------------------- robot status panel
