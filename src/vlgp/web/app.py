@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from vlgp.annotations.task_hierarchy import TaskHierarchy
-from vlgp.web.frame_service import FrameService
+from vlgp.web.frame_service import FrameService, PreloadRegistry
 from vlgp.web.session_index import (
     CAMERA_ORDER,
     NoAlignment,
@@ -36,6 +36,7 @@ from vlgp.web.session_index import (
 
 STATIC_DIR = Path(__file__).parent / 'static'
 DEFAULT_PORT = 8765
+_PRELOAD_REGISTRY = PreloadRegistry()
 
 VALID_STATUS = {'pending', 'approved', 'rejected'}
 
@@ -163,6 +164,22 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
             raise HTTPException(404, str(e))
         return Response(content=data,
                         media_type='application/octet-stream')
+
+    # ------------------------------------------------------- whole-session
+    @app.post('/api/sessions/{name}/preload')
+    def preload_session(name: str):
+        """Start background whole-session preview preload (idempotent);
+        progress via GET /api/sessions/{name}/preload/status. Encoded JPEGs
+        land in var/web_preview, so the session only needs encoding once."""
+        try:
+            total = len(frames.index.alignment(name))
+        except (SessionNotFound, NoAlignment) as e:
+            raise HTTPException(404, str(e))
+        return _PRELOAD_REGISTRY.start(frames, name, total)
+
+    @app.get('/api/sessions/{name}/preload/status')
+    def preload_status(name: str):
+        return _PRELOAD_REGISTRY.status(name)
 
     # ---------------------------------------------------------- annotations
     @app.get('/api/sessions/{name}/annotations')

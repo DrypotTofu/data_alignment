@@ -59,6 +59,8 @@ const state = {
   lastMotionRow: -1,          // drawMotion throttle: last row the curve drew
   lastMotionAt: 0,            // drawMotion throttle: last curve draw timestamp
   preloadPct: -1,             // last rendered preload percentage (DOM dedup)
+  serverPreload: null,        // server whole-session preload status (polled)
+  preloadPollTimer: null,     // server preload status poller
 };
 
 const $ = (id) => document.getElementById(id);
@@ -168,6 +170,8 @@ async function selectSession(name) {
   state.crit = {};
   state.lastDraw = {};
   state.preloadPct = -1;
+  state.serverPreload = null;
+  clearTimeout(state.preloadPollTimer);
   $('preload-bar').hidden = true;
   for (const cam of CAMERAS) {
     const cv = $(`cam-${cam.slice(-1)}`);
@@ -199,6 +203,7 @@ async function selectSession(name) {
     updateTrimInfo();
     buildArmTabs();
     await showRow(0);
+    startServerPreload(name);                          // whole-session preload
     loadSessions();                                    // refresh badge
   } catch (err) {
     alert('无法打开会话: ' + err.message);
@@ -214,6 +219,8 @@ async function selectSession(name) {
     state.frameCache = {};
     state.crit = {};
     state.lastDraw = {};
+    state.serverPreload = null;
+    clearTimeout(state.preloadPollTimer);
   }
 }
 
@@ -372,11 +379,24 @@ function preloadProgress() {
   return worst;
 }
 
-// Progress bar: "预加载 X% · 前方约 N 秒可用" — hidden once the whole
-// lookahead window is warm (smooth playback is guaranteed then). Only
-// touches the DOM when the percentage changes.
+// Progress bar: "预加载 X% · 第 N/M 段" driven by the SERVER's whole-session
+// preload (that is what makes every seek fast); falls back to the local
+// sliding-window metric when the server has no preload endpoint (old code).
+// Hidden once the whole session is preloaded — smooth playback everywhere.
 function updatePreloadBar() {
-  const pct = Math.round(preloadProgress() * 100);
+  const sp = state.serverPreload;
+  let pct, label;
+  if (sp && sp.status === 'running') {
+    pct = Math.round((sp.current / Math.max(1, sp.total)) * 100);
+    label = sp.segments > 1
+      ? `整段预加载 ${pct}% · 第 ${Math.min(sp.segment + 1, sp.segments)}/${sp.segments} 段`
+      : `整段预加载 ${pct}%`;
+  } else if (sp && sp.status === 'done') {
+    pct = 100;
+  } else {
+    pct = Math.round(preloadProgress() * 100);   // fallback: local window
+    label = `预加载 ${pct}%`;
+  }
   if (pct === state.preloadPct) return;
   state.preloadPct = pct;
   const bar = $('preload-bar'), fill = $('preload-fill'), txt = $('preload-text');
@@ -385,8 +405,37 @@ function updatePreloadBar() {
   bar.hidden = false;
   fill.style.width = pct + '%';
   fill.classList.toggle('warming', pct < 50);
-  const secs = (pct / 100) * (PRELOAD / 30);
-  txt.textContent = `预加载 ${pct}% · 前方约 ${secs.toFixed(1)} 秒可用`;
+  txt.textContent = label;
+}
+
+// Kick off the server's whole-session preview preload and poll its progress.
+// Fire-and-forget: if the endpoint is missing (old server) the bar falls
+// back to the local-window metric.
+function startServerPreload(name) {
+  clearTimeout(state.preloadPollTimer);
+  (async () => {
+    try {
+      const r = await fetch(`/api/sessions/${name}/preload`, { method: 'POST' });
+      if (!r.ok) return;
+      const st = await r.json();
+      if (state.session !== name) return;
+      state.serverPreload = st;
+      pollServerPreload(name);
+    } catch { /* fall back to the local-window metric */ }
+  })();
+}
+
+function pollServerPreload(name) {
+  clearTimeout(state.preloadPollTimer);
+  state.preloadPollTimer = setTimeout(async () => {
+    if (state.session !== name) return;
+    try {
+      const st = await api(`/api/sessions/${name}/preload/status`);
+      if (state.session !== name) return;
+      state.serverPreload = st;
+      if (st.status === 'running') pollServerPreload(name);
+    } catch { /* old server; stop polling, bar falls back */ }
+  }, 600);
 }
 
 // ------------------------------------------------- binary frame batch fetch
