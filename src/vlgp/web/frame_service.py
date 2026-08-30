@@ -29,12 +29,12 @@ from pathlib import Path
 
 import cv2
 
-from vlgp.web.session_index import CAMERA_ORDER, SessionIndex
+from vlgp.web.session_index import CAMERA_ORDER, FILENAME_COLS, SessionIndex
 
 JPEG_QUALITY = 82
 DEFAULT_MAX_WIDTH = 960
 _BATCH_WORKERS = 4
-PRELOAD_WORKERS = 4
+PRELOAD_WORKERS = 12         # 16-core host: preload uses most cores; batch stays free
 PRELOAD_SEGMENT = 18000          # one preload segment = 10 minutes @ 30 Hz
 PREVIEW_MAX_W = {'camera_arm_2': 640, 'camera_arm_1': 320, 'camera_arm_3': 320}
 _PREVIEW_ROOT = Path(__file__).resolve().parents[3] / 'var' / 'web_preview'
@@ -153,15 +153,22 @@ class PreloadRegistry:
     def _run(self, frames: FrameService, session: str, total: int, j: dict) -> None:
         pool = ThreadPoolExecutor(max_workers=PRELOAD_WORKERS)
         try:
+            # Precompute per-cam filenames ONCE: df.iloc[row] is ~220 us/row,
+            # so 40k rows would otherwise cost ~9 s of pandas lookups.
+            df = frames.index.alignment(session)
+            session_dir = frames.index.session_dir(session)
+            fnames = {cam: df[FILENAME_COLS[cam]].astype(str).tolist()
+                      for cam in CAMERA_ORDER}
             for seg in range(j['segments']):
                 with self._lock:
                     j['segment'] = seg
                 s0 = seg * PRELOAD_SEGMENT
                 s1 = min(total, s0 + PRELOAD_SEGMENT)
+                # one directory scan per cam replaces 40k Path.exists() stats
+                existing = {cam: _preview_existing(session, cam, PREVIEW_MAX_W[cam])
+                            for cam in CAMERA_ORDER}
                 pairs = [(cam, r) for cam in CAMERA_ORDER for r in range(s0, s1)]
-                missing = [p for p in pairs
-                           if not _preview_path(session, p[0], p[1],
-                                                PREVIEW_MAX_W[p[0]]).exists()]
+                missing = [p for p in pairs if p[1] not in existing[p[0]]]
                 # rows already on disk count as done immediately
                 with self._lock:
                     j['current'] += len(pairs) - len(missing)
@@ -174,9 +181,11 @@ class PreloadRegistry:
                     def one(item):
                         cam, r = item
                         try:
-                            # bypass the LRU so the pool's workers parallelize
-                            _encode_preview(frames.index, session, cam, r,
-                                            PREVIEW_MAX_W[cam])
+                            # bypass the LRU so the pool's workers parallelize;
+                            # filename precomputed once (no per-row pandas)
+                            _encode_preview_fname(session_dir, fnames[cam][r],
+                                                  session, cam, r,
+                                                  PREVIEW_MAX_W[cam])
                             return 1
                         except Exception:  # noqa: BLE001 — bad row, skip
                             return 0
@@ -212,6 +221,16 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode('ascii')
 
 
+def _preview_existing(session: str, cam: str, max_width: int) -> set[int]:
+    """Rows already on the disk cache for one camera — one directory scan
+    replaces tens of thousands of per-row Path.exists() stats."""
+    d = _PREVIEW_ROOT / _safe_part(session) / cam / f'w{int(max_width)}'
+    try:
+        return {int(p.stem) for p in d.iterdir() if p.suffix == '.jpg'}
+    except OSError:
+        return set()
+
+
 @lru_cache(maxsize=2048)
 def _jpeg_cached(index: SessionIndex, session: str, cam: str, row: int,
                  max_width: int) -> bytes:
@@ -221,17 +240,27 @@ def _jpeg_cached(index: SessionIndex, session: str, cam: str, row: int,
         return dpath.read_bytes()
     except OSError:
         pass
-    return _encode_preview(index, session, cam, row, max_width)
+    return _encode_preview_fname(index.session_dir(session),
+                                 index.frame_filename(session, cam, row),
+                                 session, cam, row, max_width)
 
 
-def _encode_preview(index: SessionIndex, session: str, cam: str, row: int,
-                    max_width: int) -> bytes:
+def _encode_preview_fname(session_dir: Path, fname: str, session: str,
+                          cam: str, row: int, max_width: int) -> bytes:
     """Decode + downscale + JPEG-encode one row and write it to the disk
-    cache. Bypasses the LRU so background preload workers actually run in
-    parallel (the LRU holds its lock for the whole wrapped call)."""
+    cache. Takes a pre-resolved filename (the preload precomputes all of
+    them once instead of paying ~220 us/row of pandas lookups). Bypasses
+    the LRU so background preload workers actually run in parallel (the
+    LRU holds its lock for the whole wrapped call)."""
     dpath = _preview_path(session, cam, row, max_width)
-    fname = index.frame_filename(session, cam, row)
-    img = cv2.imread(str(index.session_dir(session) / cam / fname))
+    # half-resolution PNG decode: source sizes are exactly 2x the preview
+    # targets (1280->640, 640->320), REDUCED_COLOR_2 yields the target size
+    # directly and is ~1.6x faster on the wrist cams (no gain on arm2, but
+    # harmless); fall back to a full read when it comes out too small.
+    img = cv2.imread(str(session_dir / cam / fname),
+                     cv2.IMREAD_REDUCED_COLOR_2)
+    if img is None or img.shape[1] < max_width:
+        img = cv2.imread(str(session_dir / cam / fname))
     if img is None:
         raise FileNotFoundError(f'{session}/{cam}/{fname} unreadable')
     h, w = img.shape[:2]
