@@ -8,6 +8,7 @@ const PRELOAD = 128;          // rows warmed AHEAD of the playhead (smooth playb
 const FETCH_CHUNK = 16;       // rows per network request per camera
 const CRIT_WINDOW = 16;       // rows fetched per critical-path request (seek)
 const MOTION_POINTS = 2000;   // motion-curve pixel budget (server downsample)
+const FPS = 30;               // alignment grid rate — time axis MM:SS:FF
 const MAX_W = { camera_arm_2: 640, camera_arm_1: 320, camera_arm_3: 320 };
 const CURVE_COLORS = { arm1: '#ffb43c', arm2: '#c8c8c8', arm3: '#78dc78', arm4: '#c8c8c8' };
 const GRIPPER_COLOR = '#7896ff';
@@ -592,6 +593,54 @@ function drawMotionIfNeeded() {
   drawMotion();
 }
 
+// ------------------------------------------------------------------ time axis
+// Row index -> MM:SS:FF (frames within the second, 30 fps grid).
+function fmtTime(row) {
+  row = Math.max(0, row);
+  const f = row % FPS;
+  const s = Math.floor(row / FPS) % 60;
+  const m = Math.floor(row / (FPS * 60));
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+}
+
+// Tick interval (seconds) so the ruler stays readable (~14 labels max).
+function rulerStep(dur) {
+  for (const s of [10, 30, 60, 120, 300, 600]) {
+    if (dur / s <= 14) return s;
+  }
+  return 900;
+}
+
+// Ruler tick label "M:SS" (no frame component — frame readout is separate).
+function fmtTick(t) {
+  return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+}
+
+// Time ruler above the playback slider: MM:SS tick marks + a white marker
+// at the current position. Small canvas — safe to redraw every showRow.
+function drawTimeRuler() {
+  const cv = $('time-ruler');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const n = state.nRows;
+  if (n < 2) return;
+  const dur = n / FPS;
+  const step = rulerStep(dur);
+  const span = cv.width - 4;
+  ctx.font = '9px "Microsoft YaHei", sans-serif';
+  ctx.fillStyle = '#8fa3bf';
+  ctx.strokeStyle = '#4a5568';
+  for (let t = 0; t <= dur + 1e-9; t += step) {
+    const x = 2 + (Math.min(t, dur) / dur) * span;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 6); ctx.stroke();
+    ctx.fillText(fmtTick(t), x + 3, 12);
+  }
+  const mx = 2 + (state.row / (n - 1)) * span;
+  ctx.strokeStyle = '#ffffff';
+  ctx.beginPath(); ctx.moveTo(mx, 0); ctx.lineTo(mx, cv.height); ctx.stroke();
+}
+
 // Update the playhead: counter, curve marker, cache warming. Rendering is
 // handled by the rAF loop, so this never waits on the network.
 function showRow(row) {
@@ -599,7 +648,10 @@ function showRow(row) {
   state.row = row;
   $('slider').value = row;
   $('row-info').textContent = `row ${row} / ${state.nRows - 1}`;
+  const ti = $('time-info');
+  if (ti) ti.textContent = fmtTime(row);
   drawMotionIfNeeded();
+  drawTimeRuler();
   ensureRowCached(row);
   scheduleRowStatus(row);
   kickPreload();

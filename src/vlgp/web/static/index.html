@@ -42,7 +42,10 @@
         <div id="arm-status"></div>
       </section>
       <section id="transport">
-        <input type="range" id="slider" min="0" max="0" value="0">
+        <div id="timeline">
+          <canvas id="time-ruler" width="960" height="16"></canvas>
+          <input type="range" id="slider" min="0" max="0" value="0">
+        </div>
         <div class="buttons">
           <button id="btn-in" disabled title="设置 IN ( [ )">IN</button>
           <button id="btn-out" disabled title="设置 OUT ( ] )">OUT</button>
@@ -55,6 +58,7 @@
             <option value="2">2x</option>
             <option value="4">4x</option>
           </select>
+          <span id="time-info"></span>
           <span id="trim-info"></span>
           <select id="status" disabled>
             <option value="pending">pending</option>
