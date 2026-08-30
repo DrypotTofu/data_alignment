@@ -62,6 +62,8 @@ const state = {
   preloadPct: -1,             // last rendered preload percentage (DOM dedup)
   serverPreload: null,        // server whole-session preload status (polled)
   preloadPollTimer: null,     // server preload status poller
+  pipelineJob: null,          // active pipeline job id (verify/build/video)
+  pipelineTimer: null,        // pipeline status poller
 };
 
 const $ = (id) => document.getElementById(id);
@@ -199,6 +201,7 @@ async function selectSession(name) {
   state.serverPreload = null;
   clearTimeout(state.preloadPollTimer);
   $('preload-bar').hidden = true;
+  resetPipeline();
   for (const cam of CAMERAS) {
     const cv = $(`cam-${cam.slice(-1)}`);
     if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
@@ -224,6 +227,7 @@ async function selectSession(name) {
     $('status').disabled = false;
     $('status').value = state.status;
     $('curve-bar').hidden = false;
+    setPipelineEnabled(true);
     await loadMotion();
     updateStatusLabel();
     updateTrimInfo();
@@ -247,6 +251,8 @@ async function selectSession(name) {
     state.lastDraw = {};
     state.serverPreload = null;
     clearTimeout(state.preloadPollTimer);
+    resetPipeline();
+    setPipelineEnabled(false);
   }
 }
 
@@ -346,6 +352,133 @@ function frameCache(cam) {
   let c = state.frameCache[cam];
   if (!c) { c = new Map(); state.frameCache[cam] = c; }
   return c;
+}
+
+// ------------------------------------------------------------------ pipeline
+// Run the CLI pipeline steps (verify_alignment / build_srth_dataset /
+// images_to_video) as server-side background jobs, poll status, show the log.
+function setPipelineEnabled(on) {
+  for (const id of ['btn-verify', 'btn-build', 'btn-video', 'btn-meta']) {
+    $(id).disabled = !on;
+  }
+}
+
+function resetPipeline() {
+  clearTimeout(state.pipelineTimer);
+  state.pipelineTimer = null;
+  state.pipelineJob = null;
+  $('pipe-status').textContent = '';
+  $('pipe-log').hidden = true;
+}
+
+function startPipeline(kind, label) {
+  if (!state.session) return;
+  if (state.pipelineJob) { alert('已有流水线任务在运行，请等待完成'); return; }
+  const st = $('pipe-status');
+  st.textContent = `${label}启动中…`;
+  $('pipe-log').hidden = true;
+  (async () => {
+    try {
+      const r = await fetch(`/api/sessions/${state.session}/pipeline/${kind}`,
+                            { method: 'POST' });
+      if (!r.ok) {
+        let body = {};
+        try { body = await r.json(); } catch { /* ignore */ }
+        st.textContent = `启动失败: ${JSON.stringify(body.detail || body)}`;
+        return;
+      }
+      const job = await r.json();
+      state.pipelineJob = job.id;
+      pollPipeline(job.id);
+    } catch (e) { st.textContent = '启动失败: ' + e.message; }
+  })();
+}
+
+function pollPipeline(jobId) {
+  clearTimeout(state.pipelineTimer);
+  state.pipelineTimer = setTimeout(async () => {
+    if (state.pipelineJob !== jobId) return;
+    try {
+      const st = await api(`/api/pipeline/${jobId}/status`);
+      const el = $('pipe-status');
+      if (st.status === 'running') {
+        el.textContent = `${st.label}运行中… (${Math.round((Date.now() / 1000) - st.started_at)}s)`;
+        pollPipeline(jobId);
+      } else {
+        el.textContent = st.status === 'done'
+          ? `${st.label}完成 (${st.elapsed_s}s)`
+          : `${st.label}失败 (exit ${st.exit_code})`;
+        state.pipelineJob = null;
+        showPipeLog(jobId, true);          // auto-show the log on completion
+        if (st.status === 'done') loadSessions();  // build/video change session state
+      }
+    } catch { pollPipeline(jobId); }       // transient error, keep polling
+  }, 800);
+}
+
+async function showPipeLog(jobId, force) {
+  try {
+    const r = await fetch(`/api/pipeline/${jobId}/log`);
+    if (!r.ok) return;
+    const text = await r.text();
+    const pre = $('pipe-log');
+    pre.textContent = text;
+    if (force || state.pipelineJob === jobId) pre.hidden = false;
+  } catch { /* ignore */ }
+}
+
+// ------------------------------------------------------- session meta (T8)
+async function openMetaForm() {
+  const f = $('meta-form');
+  if (f.hidden === false) { f.hidden = true; return; }   // toggle closed
+  try {
+    const meta = await api(`/api/sessions/${state.session}/meta`);
+    $('meta-task-instruction').value = meta.task_instruction || '';
+    $('meta-task-type').value = meta.task_type || 'other';
+    $('meta-operator').value = meta.operator || '';
+    $('meta-organ-model').value = meta.organ_model || '';
+    $('meta-calibration').value = meta.camera_calibration || '';
+    $('meta-notes').value = meta.notes || '';
+    const instr = meta.instruments || {};
+    $('meta-instruments').value =
+      Object.entries(instr).map(([k, v]) => `${k}=${v}`).join(',');
+    f.hidden = false;
+  } catch (e) { alert('读取元数据失败: ' + e.message); }
+}
+
+async function saveMeta() {
+  const body = {
+    task_instruction: $('meta-task-instruction').value,
+    task_type: $('meta-task-type').value,
+    operator: $('meta-operator').value,
+    organ_model: $('meta-organ-model').value,
+    camera_calibration: $('meta-calibration').value,
+    notes: $('meta-notes').value,
+  };
+  const instrStr = $('meta-instruments').value.trim();
+  const instr = {};
+  if (instrStr) {
+    for (const pair of instrStr.split(',')) {
+      if (pair.includes('=')) {
+        const [k, v] = pair.split('=', 2);
+        instr[k.trim()] = v.trim();
+      }
+    }
+  }
+  body.instruments = instr;
+  try {
+    const r = await fetch(`/api/sessions/${state.session}/meta`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body) });
+    if (!r.ok) {
+      let e = {};
+      try { e = await r.json(); } catch { /* ignore */ }
+      alert('保存失败: ' + JSON.stringify(e.detail || e));
+      return;
+    }
+    alert('已保存 session_meta.json');
+    $('meta-form').hidden = true;
+  } catch (e) { alert('保存失败: ' + e.message); }
 }
 
 // ------------------------------------------------------- render loop (rAF)
@@ -851,6 +984,17 @@ $('btn-next').onclick = () => step(1);
 $('btn-play').onclick = togglePlay;
 $('btn-save').onclick = saveAnnotations;
 $('btn-next-session').onclick = nextSession;
+// pipeline
+$('btn-verify').onclick = () => startPipeline('verify', '验证对齐');
+$('btn-build').onclick = () => startPipeline('build', '构建数据集');
+$('btn-video').onclick = () => startPipeline('video', '导出预览视频');
+$('btn-meta').onclick = openMetaForm;
+$('meta-save').onclick = saveMeta;
+$('meta-cancel').onclick = () => { $('meta-form').hidden = true; };
+$('btn-pipe-log').onclick = () => {
+  if (!state.pipelineJob) return;
+  showPipeLog(state.pipelineJob, true);
+};
 // fixed-size inline SVG icons (no font-glyph tofu, no layout shift on click)
 $('btn-play').innerHTML = ICONS.play;
 $('btn-prev').innerHTML = ICONS.prev;

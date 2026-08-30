@@ -69,6 +69,46 @@
           <button id="btn-next-session" disabled>下一个 (N)</button>
         </div>
       </section>
+      <section id="pipeline">
+        <div class="pipe-head">
+          <span class="pipe-title">流水线</span>
+          <span id="pipe-status"></span>
+          <button id="btn-pipe-log" class="pipe-log-btn" title="查看运行日志">日志</button>
+        </div>
+        <div class="pipe-buttons">
+          <button id="btn-verify" disabled>验证对齐</button>
+          <button id="btn-build" disabled>构建数据集</button>
+          <button id="btn-video" disabled>导出视频</button>
+          <button id="btn-meta" disabled>写入元数据</button>
+        </div>
+        <pre id="pipe-log" hidden></pre>
+        <div id="meta-form" hidden>
+          <div class="meta-grid">
+            <label>任务指令 (EN, SRT-H 风格)
+              <input id="meta-task-instruction" placeholder="grasp the needle">
+            </label>
+            <label>任务类型
+              <select id="meta-task-type">
+                <option>needle_touching</option>
+                <option>needle_grasping</option>
+                <option>autonomous_suturing</option>
+                <option>endoscope_adjust</option>
+                <option>calibration</option>
+                <option selected>other</option>
+              </select>
+            </label>
+            <label>操作员 <input id="meta-operator"></label>
+            <label>器械/模型 id <input id="meta-organ-model"></label>
+            <label>标定 id (T7) <input id="meta-calibration"></label>
+            <label>备注 <input id="meta-notes"></label>
+            <label>器械分配 <input id="meta-instruments" placeholder="arm_1=圆头抓取钳,arm_3=持针钳"></label>
+          </div>
+          <div class="meta-actions">
+            <button id="meta-save">保存</button>
+            <button id="meta-cancel">取消</button>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
   <script src="app.js"></script>

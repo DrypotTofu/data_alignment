@@ -75,3 +75,23 @@ button:disabled { opacity: .4; cursor: default; }
 #time-info { font-family: Consolas, monospace; font-size: 13px;
              color: #ffd479; }
 #trim-info { font-size: 12px; color: #a8b4c2; margin-left: auto; }
+#pipeline { margin-top: 10px; background: #20242a; border-radius: 6px;
+            padding: 8px 10px; }
+.pipe-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.pipe-title { font-size: 13px; color: #8fa3bf; font-weight: 600; }
+#pipe-status { font-size: 12px; color: #ffd479; }
+.pipe-log-btn { margin-left: auto; padding: 2px 10px; font-size: 12px; }
+.pipe-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.pipe-buttons button { height: 26px; font-size: 13px; }
+#pipe-log { margin-top: 8px; max-height: 180px; overflow: auto;
+            background: #14171b; border-radius: 4px; padding: 8px;
+            font-size: 11px; font-family: Consolas, monospace;
+            color: #b9c2cf; white-space: pre-wrap; }
+#meta-form { margin-top: 10px; border-top: 1px solid #2f353d; padding-top: 8px; }
+.meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+.meta-grid label { display: flex; flex-direction: column; font-size: 12px;
+                   color: #8fa3bf; gap: 3px; }
+.meta-grid input, .meta-grid select { background: #2b3038; color: #d7dae0;
+                   border: 1px solid #3a4250; border-radius: 4px;
+                   padding: 4px 6px; font-size: 13px; }
+.meta-actions { margin-top: 8px; display: flex; gap: 8px; }

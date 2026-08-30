@@ -17,6 +17,7 @@ Run:  python -m vlgp.web.app [--port 8765] [--host 127.0.0.1]
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -26,7 +27,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from vlgp.annotations.task_hierarchy import TaskHierarchy
+from vlgp.review.write_session_meta import DEFAULT_TEMPLATE, TASK_TYPES
 from vlgp.web.frame_service import FrameService, PreloadRegistry
+from vlgp.web.pipeline_service import _pipeline
 from vlgp.web.session_index import (
     CAMERA_ORDER,
     NoAlignment,
@@ -204,6 +207,90 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
     @app.get('/api/sessions/{name}/preload/status')
     def preload_status(name: str):
         return _PRELOAD_REGISTRY.status(name)
+
+    # ----------------------------------------------------- pipeline (verify /
+    # build / video — run the CLI tools as background subprocess jobs)
+    @app.post('/api/sessions/{name}/pipeline/{kind}')
+    def pipeline_start(name: str, kind: str, no_copy: bool = False):
+        try:
+            session_dir = index.session_dir(name)
+        except SessionNotFound as e:
+            raise HTTPException(404, str(e))
+        if kind == 'verify':
+            return _pipeline.start('verify', '验证对齐',
+                                   ['vlgp.alignment.verify_alignment',
+                                    '--session', str(session_dir)])
+        if kind == 'build':
+            argv = ['vlgp.dataset.build_srth_dataset',
+                    '--session', str(session_dir)]
+            if no_copy:
+                argv.append('--no-copy')
+            return _pipeline.start('build', '构建数据集', argv)
+        if kind == 'video':
+            seq = []
+            for cam in CAMERA_ORDER:
+                arm = cam.rsplit('_', 1)[-1]
+                seq.append(['vlgp.dataset.images_to_video',
+                            '--dir', str(session_dir / cam),
+                            '--output', str(session_dir / f'arm{arm}_preview.mp4'),
+                            '--timestamp-overlay'])
+            return _pipeline.start_sequence('video', '导出预览视频', seq)
+        raise HTTPException(404, f'unknown pipeline kind {kind!r}')
+
+    @app.get('/api/pipeline/{job_id}/status')
+    def pipeline_status(job_id: str):
+        st = _pipeline.status(job_id)
+        if st is None:
+            raise HTTPException(404, f'unknown job {job_id}')
+        return st
+
+    @app.get('/api/pipeline/{job_id}/log')
+    def pipeline_log(job_id: str):
+        text = _pipeline.log_tail(job_id)
+        if text is None:
+            raise HTTPException(404, f'unknown job {job_id}')
+        return Response(content=text, media_type='text/plain; charset=utf-8')
+
+    # ---------------------------------------------- session metadata (T8 form)
+    @app.get('/api/sessions/{name}/meta')
+    def session_meta_get(name: str):
+        try:
+            session_dir = index.session_dir(name)
+        except SessionNotFound as e:
+            raise HTTPException(404, str(e))
+        p = session_dir / 'session_meta.json'
+        if p.exists():
+            meta = json.loads(p.read_text(encoding='utf-8'))
+            return {k: meta.get(k, v) for k, v in DEFAULT_TEMPLATE.items()}
+        return dict(DEFAULT_TEMPLATE)
+
+    @app.put('/api/sessions/{name}/meta')
+    def session_meta_put(name: str, body: dict):
+        try:
+            session_dir = index.session_dir(name)
+        except SessionNotFound as e:
+            raise HTTPException(404, str(e))
+        problems = []
+        meta = dict(DEFAULT_TEMPLATE)
+        for k in DEFAULT_TEMPLATE:
+            if k in body:
+                meta[k] = body[k]
+        if not isinstance(meta['task_type'], str) or meta['task_type'] not in TASK_TYPES:
+            problems.append(f"task_type must be one of {TASK_TYPES}")
+        for k in ('session_name', 'task_instruction', 'operator', 'organ_model',
+                  'camera_calibration', 'notes'):
+            if not isinstance(meta[k], str):
+                problems.append(f'{k} must be a string')
+        if not isinstance(meta['subtask_sequence'], list):
+            problems.append('subtask_sequence must be a list')
+        if not isinstance(meta['instruments'], dict):
+            problems.append('instruments must be a dict')
+        if problems:
+            raise HTTPException(422, {'errors': problems})
+        out = session_dir / 'session_meta.json'
+        out.write_text(json.dumps(meta, ensure_ascii=False, indent=2),
+                       encoding='utf-8')
+        return {'ok': True, 'saved': meta}
 
     # ---------------------------------------------------------- annotations
     @app.get('/api/sessions/{name}/annotations')
