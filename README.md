@@ -58,6 +58,11 @@ python -m vlgp.review.process_session --session sessions/<session_name> [--meta]
 | `collect_calibration.bat` | `vlgp.calibration.collect_calibration` | 标定板内参采集 |
 | `camera_param_tuner.bat` | `vlgp.calibration.camera_param_tuner` | 相机曝光/白平衡实时调参 |
 | `process_session.bat` | `vlgp.review.process_session` | 一键完整流水线 |
+| `start_web_platform.bat` | `vlgp.web.app` | Web 标注平台（FastAPI + JS 前端，127.0.0.1:8765） |
+| `validate_kinematics.bat` | `vlgp.kinematics.validate` | MDH FK 与 PLC 对标验证（T16） |
+| `validate_task_hierarchy.bat` | `vlgp.annotations.task_hierarchy` | 任务层级词表结构/片段校验（T15） |
+
+注：`export_lerobot`（LeRobotDataset v3.0 导出，T17）暂无 .bat，用 `python -m vlgp.dataset.export_lerobot --episode <srth_episode_dir> --out <dataset_dir>` 运行。
 
 **逐步方式（命令行）**（需要单独控制某一步时使用；详细规范见 `tech_repo/VLGP_标定与元数据规范_20260817.md` 第 6 节）：
 
@@ -93,12 +98,15 @@ python -m vlgp.dataset.images_to_video --dir sessions/<session_name>/camera_arm_
 │   ├── acquisition/              # 采集框架（Session + DataSource + registry/config/layout）
 │   │   ├── sources/              # twincat / usb_camera_process / reserved_arm (+ legacy/)
 │   │   └── process_workers/      # 相机子进程 worker
-│   ├── alignment/                # align_camera_anchor / verify_alignment / calibrate_temporal_drift
-│   ├── dataset/                  # build_srth_dataset / pack_session / images_to_video
+│   ├── alignment/                # align_camera_anchor / verify_alignment（calibrate_temporal_drift 已归档）
+│   ├── dataset/                  # build_srth_dataset / images_to_video / export_lerobot（pack_session 已归档）
 │   ├── review/                   # review_session / process_session / write_session_meta
 │   ├── calibration/              # collect_calibration / camera_param_tuner
 │   ├── analysis/                 # analyze_session / analyze_gripper
 │   ├── capture/                  # manual_acquisition / camera_assignment_* / preview_*
+│   ├── kinematics/               # MDH 正运动学与基座系→镜系变换（validate.py，T16）
+│   ├── annotations/              # T15 任务层级词表框架（task_hierarchy.py）
+│   ├── web/                      # Web 标注平台（FastAPI 后端 + static/ 前端，T15/T17）
 │   └── constants.py              # 共享魔法数字（30 Hz / 15 ms / 60 步等）
 ├── scripts/
 │   ├── run_acquisition.py        # 采集入口
@@ -109,8 +117,9 @@ python -m vlgp.dataset.images_to_video --dir sessions/<session_name>/camera_arm_
 ├── calibrations/                 # 标定结果（git 忽略）
 ├── var/camera_test_frames/       # 相机探测测试帧（git 忽略）
 └── tech_repo/                    # 技术文档
-    ├── VLGP_项目状态与技术备忘_20260803.md   # 主文档，持续更新
-    └── archive/                  # 已被覆盖的旧文档
+    ├── VLGP_项目状态与技术备忘_20260803.md   # 详细技术背景主文档
+    ├── VLGP_项目状态与技术备忘_20260816.md   # 当前快照
+    └── archive/                  # 已被覆盖的旧文档（0713/0717/0719）
 ```
 
 ## 更多文档
@@ -118,6 +127,6 @@ python -m vlgp.dataset.images_to_video --dir sessions/<session_name>/camera_arm_
 - **项目状态备忘（当前快照，2026-08-16）**：`tech_repo/VLGP_项目状态与技术备忘_20260816.md`
 - **项目状态与技术备忘**（详细技术背景主文档）：`tech_repo/VLGP_项目状态与技术备忘_20260803.md`
 - 执行 Agent 任务交接与验收标准：`AGENT_HANDOFF.md`
-- 技术文档 / 进展报告：`tech_repo/VLGP_项目技术文档_20260719.md`、`tech_repo/VLGP_项目进展报告_20260719.md`
+- 技术文档 / 进展报告（已归档）：`tech_repo/archive/VLGP_项目技术文档_20260719.md`、`tech_repo/archive/VLGP_项目进展报告_20260719.md`
 - 会话恢复检查点：`SESSION_CHECKPOINT.md`
 - Agent 开发约定：`scripts/AGENTS.md`

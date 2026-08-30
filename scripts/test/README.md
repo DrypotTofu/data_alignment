@@ -42,8 +42,8 @@ If you are using the `SurgDataColl` conda environment, `opencv-python` and
   `python verification/verify_capture.py --dir ../sessions/<session>/<camera>/ --num-frames 3`
 - `verify_full_sync.py` — verify multi-modal alignment for a full sync session (camera metadata + TwinCAT poses):
   `python verification/verify_full_sync.py --session ../sessions/<session_name>`
-- `check_clock_sync.py` — check PC clock against an NTP server:
-  `python verification/check_clock_sync.py --ntp pool.ntp.org`
+- `check_clock_sync.py` — compare the PC clock against the TwinCAT PLC timestamp via ADS (per-sample offset + RTT; useful for verifying NTP/PTP synchronization or measuring ADS latency):
+  `python verification/check_clock_sync.py --ams-net-id 192.168.1.100.1.1 --symbol MAIN.timestamp_ns --samples 30`
 
 ### benchmark/
 

@@ -1,6 +1,6 @@
 # AGENT 任务交接：开始采集标注/训练数据前的就绪工作
 
-> 创建日期：2026-08-16；最近更新：2026-08-26（执行 Agent：T14 真实数据回归完成（instruments=内窥镜）；T16 delta_rot_6d 局部系改造完成 + 真实数据验证启动（FK/Kabsch 待单关节运动）；剩余 T5+T6 / T7-现场 / T10-评审 / T15 / T16（部分））。
+> 创建日期：2026-08-16；最近更新：2026-08-27（执行 Agent：T14 真实数据回归完成（instruments=内窥镜）；T16 delta_rot_6d 局部系改造完成 + 真实数据验证启动（FK/Kabsch 待单关节运动）；**T15 v0 完成**（Web 平台 + T10 裁剪功能迁移，回归 37/37、43/43 PASS）；**T17 完成**（LeRobotDataset v3.0 导出，往返验证 12/12 PASS）；剩余 T5+T6 / T7-现场 / T10-评审 / T15 v1（片段标注，待词表语义定稿）/ T16（FK/Kabsch 数据验证，待单关节运动））。
 > 2026-08-23 PM 更新：① T15 定稿 Web 架构（FastAPI + JS 前端），v0 先迁移 T10 裁剪功能进 Web 平台（迁移完成前 PyQt5 版继续可用）；② PM 决策：`delta_rot_6d` 改为 SRT 局部系约定（见 T16 决策注记）。
 > 2026-08-26 PM 更新：图像工程师答复——内窥镜畸变由主机内置矫正（出厂标定存镜头 EEPROM），T7-现场标定范围收缩为腕部双相机；内窥镜双目两路输出可行性待现场确认。
 > 2026-08-26 PM 更新 2：数据集格式决策——采用 **LeRobotDataset v3.0** 规范，新增 T17（格式对齐与导出器）；内窥镜双目两路可同时输出已确认（见 T7-现场）。
@@ -124,7 +124,7 @@
 
 **剩余（需桌面操作）**：在 `sessions/20260817_124143` 上完整评审一遍（打 IN/OUT → 保存 → 重进状态恢复 → 4x 快放流畅），汇报工具截图/录屏说明、验收结果、annotations.json 实例。
 
-> 用法：`python scripts/tools/review_session.py --session sessions/20260817_124143`（支持任意 cwd，`--sessions sessions/` 批量模式）。
+> 用法：`python -m vlgp.review.review_session --session sessions/20260817_124143`（支持任意 cwd，`--sessions sessions/` 批量模式）。
 
 ### T11. 腕部相机成像质量修复 ✅（2026-08-18 完成，详见归档）
 
@@ -135,7 +135,7 @@
 
 任务内容（按顺序）：
 
-1. **相机 worker 增加手动参数支持**：在 `usb_camera_worker.py` / 相机源配置中加入手动曝光与白平衡设置（`CAP_PROP_EXPOSURE`、`CAP_PROP_WB_TEMPERATURE` 或 `CAP_PROP_WHITE_BALANCE_BLUE_U/RED_V`），参数进 `default.yaml` 的 per-camera 配置。注意 MSMF 与 DSHOW 支持的属性集不同，需逐个实测并记录哪些属性真正生效（打印 set 后 get 的回读值）。`scripts/acquisition/` 核心代码改动需先提交方案给 PM 确认；worker/config 层改动可直接做。
+1. **相机 worker 增加手动参数支持**：在 `usb_camera_worker.py` / 相机源配置中加入手动曝光与白平衡设置（`CAP_PROP_EXPOSURE`、`CAP_PROP_WB_TEMPERATURE` 或 `CAP_PROP_WHITE_BALANCE_BLUE_U/RED_V`），参数进 `default.yaml` 的 per-camera 配置。注意 MSMF 与 DSHOW 支持的属性集不同，需逐个实测并记录哪些属性真正生效（打印 set 后 get 的回读值）。`src/vlgp/acquisition/` 核心代码改动需先提交方案给 PM 确认；worker/config 层改动可直接做。
 2. **白纸标定流程（现场）**：用户会放置一张**白纸**（替代灰卡）。在实际工作照明下（内窥镜光源开到工作档位、器械就位）：对 arm_1/arm_3 分别调整白平衡至白纸呈中性白色后**锁定**；调整曝光至内窥镜直射区红通道不 clipping（检查直方图，R 通道峰值 < 250）后**锁定**。
 3. **补光（用户侧配合）**：建议加一盏带柔光的 LED 补光灯打亮周边，压缩场景动态范围并统一色温；避免混用不同色温光源。
 4. **验证采集**：调定后采一条 30 秒 session（含器械运动），用 T10 的 `review_session.py` 或抽帧检查确认验收线（见下）。
@@ -272,11 +272,11 @@ v3.0 格式要点（2026-08-26 从 HF 官方文档 `lerobot-dataset-v3` 核对�
 - 每完成一项任务：在备忘文档 **第 0 节更新记录表**追加一行（日期 + 一句话结论），详细数据写入对应章节。
 - 同步更新根目录 `SESSION_CHECKPOINT.md` 的「最近完成的工作」与「待办」。
 - git 提交遵循仓库现有 conventional commits 风格（`feat(...)` / `fix(...)` / `docs(...)`）。
-- 遇到以下情况**停下来汇报而不是绕过**：硬件指标不达标、数据异常（坐标系/量纲可疑）、采集进程不稳定、需要修改采集框架核心代码（`scripts/acquisition/`）。
+- 遇到以下情况**停下来汇报而不是绕过**：硬件指标不达标、数据异常（坐标系/量纲可疑）、采集进程不稳定、需要修改采集框架核心代码（`src/vlgp/acquisition/`）。
 
 ## 5. 明确不做的事（本阶段范围外）
 
 - PTP/EL6688 时间同步升级（事后漂移模型已够用）。
 - DAgger 纠正采集 GUI（属于初始模型训练之后）。
 - 存储格式迁移调研（HDF5/zarr 之外）。
-- `scripts/acquisition/sources/legacy/` 与各 `archive/` 目录：只读，不改动。
+- `src/vlgp/acquisition/sources/legacy/` 与各 `archive/` 目录：只读，不改动。
