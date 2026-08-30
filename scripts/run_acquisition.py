@@ -16,7 +16,6 @@ from pathlib import Path
 
 from vlgp.acquisition import AcquisitionSession
 from vlgp.acquisition.config import load_config
-from vlgp.acquisition.registry import build_source_from_config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,15 +39,7 @@ def main():
     if args.name:
         cfg.session_name = args.name
 
-    session = AcquisitionSession(cfg)
-    for source_cfg in cfg.sources:
-        if source_cfg.get('enabled') is False:
-            logger.info('Source %s is disabled in config, skipping',
-                        source_cfg.get('name', source_cfg.get('type')))
-            continue
-        source = build_source_from_config(source_cfg)
-        session.register_source(source)
-
+    session = AcquisitionSession.from_config(cfg)
     session.start()
 
     # Check whether any source must run in the main thread.

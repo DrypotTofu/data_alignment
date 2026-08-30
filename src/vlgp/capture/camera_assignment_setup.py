@@ -19,21 +19,13 @@ from pathlib import Path
 import cv2
 import yaml
 
-
-COMMON_RESOLUTIONS = [
-    (1920, 1080),
-    (1280, 720),
-    (1024, 768),
-    (800, 600),
-    (640, 480),
-    (320, 240),
-]
-
-BACKENDS = {
-    'dshow': cv2.CAP_DSHOW,
-    'msmf': cv2.CAP_MSMF,
-    'any': cv2.CAP_ANY,
-}
+from vlgp.capture.camera_probe import (
+    BACKENDS,
+    COMMON_RESOLUTIONS,
+    grab_frame,
+    open_camera,
+    probe_default_state,
+)
 
 FOURCC_OPTIONS = ['MJPG', 'YUY2']
 IMAGE_FORMAT_OPTIONS = ['jpg', 'png']
@@ -69,18 +61,18 @@ class CameraInfo:
         self.preview_path: Path | None = None
 
     def probe(self, benchmark_duration_s: float = 2.0) -> bool:
-        backend = BACKENDS.get(self.backend_name, cv2.CAP_DSHOW)
-        cap = cv2.VideoCapture(self.index, backend)
-        if not cap.isOpened():
+        cap = open_camera(self.index, self.backend_name)
+        if cap is None:
             return False
 
         self.available = True
-        time.sleep(0.3)
-        self.default_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.default_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.default_fps = cap.get(cv2.CAP_PROP_FPS)
-        cap.release()
+        try:
+            self.default_width, self.default_height, self.default_fps = \
+                probe_default_state(cap)
+        finally:
+            cap.release()
 
+        backend = BACKENDS.get(self.backend_name, cv2.CAP_DSHOW)
         for w, h in COMMON_RESOLUTIONS:
             for fourcc in FOURCC_OPTIONS:
                 profile = self._benchmark_profile(backend, w, h, fourcc, benchmark_duration_s)
@@ -142,42 +134,23 @@ class CameraInfo:
     def save_preview(self, out_dir: Path) -> Path | None:
         if not self.available:
             return None
-        backend = BACKENDS.get(self.backend_name, cv2.CAP_DSHOW)
 
         # Pick the highest-resolution working profile for the preview.
         working = [p for p in self.profiles if p.frame_read]
         if working:
             best = max(working, key=lambda p: p.actual_wh[0] * p.actual_wh[1])
-            w, h = best.requested_wh
-            fourcc = best.fourcc
+            w, h, fourcc = best.requested_wh[0], best.requested_wh[1], best.fourcc
         else:
-            w, h = self.default_width, self.default_height
-            fourcc = 'MJPG'
+            w, h, fourcc = self.default_width, self.default_height, 'MJPG'
 
-        cap = cv2.VideoCapture(self.index, backend)
-        if not cap.isOpened():
-            return None
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
-        time.sleep(0.5)
-        actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-        frame = None
-        for _ in range(15):
-            ret, f = cap.read()
-            if ret and f is not None and f.size > 0:
-                frame = f
-                break
-            time.sleep(0.05)
-        cap.release()
-
+        frame = grab_frame(self.index, w, h, self.backend_name, fourcc=fourcc)
         if frame is None:
             return None
 
+        actual_h, actual_w = frame.shape[:2]
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         filename = f'cam{self.index}_{self.backend_name}_{actual_w}x{actual_h}_{timestamp}.png'
+        out_dir.mkdir(parents=True, exist_ok=True)
         self.preview_path = out_dir / filename
         cv2.imwrite(str(self.preview_path), frame)
         return self.preview_path

@@ -17,8 +17,7 @@ from pathlib import Path
 
 import cv2
 
-
-BACKENDS = {'dshow': cv2.CAP_DSHOW, 'msmf': cv2.CAP_MSMF, 'any': cv2.CAP_ANY}
+from vlgp.capture.camera_probe import BACKENDS
 
 
 def probe_cameras(indices: list[int], backend_name: str = 'dshow') -> dict[int, tuple[int, int]]:

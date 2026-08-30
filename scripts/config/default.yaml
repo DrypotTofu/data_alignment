@@ -78,7 +78,9 @@ sources:
   image_format: png
   writer_threads: 2
   exposure: -5
-  wb_temperature: 5000
+  # AWB active (CODE_REVIEW_20260830 决策 2026-08-30): wb_temperature removed —
+  # the worker skips manual WB when auto_wb=1, so a stored value was silently
+  # ineffective. Fallback: set auto_wb: 0 + wb_temperature to go manual.
   auto_wb: 1
   brightness: 36
   contrast: 5
@@ -96,7 +98,6 @@ sources:
   backend: dshow
   image_format: png
   exposure: -5
-  wb_temperature: 4300
   auto_wb: 1
   brightness: 36
   contrast: 5

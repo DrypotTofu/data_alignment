@@ -21,7 +21,6 @@ from pathlib import Path
 
 from vlgp.acquisition import AcquisitionSession
 from vlgp.acquisition.config import load_config
-from vlgp.acquisition.registry import build_source_from_config
 
 
 logging.basicConfig(
@@ -79,14 +78,7 @@ def main() -> int:
     cfg = load_config(args.config)
     cfg.session_name = args.name if args.name else default_session_name()
 
-    session = AcquisitionSession(cfg)
-    for source_cfg in cfg.sources:
-        # Skip sources explicitly disabled by the assignment setup script.
-        if source_cfg.get('enabled') is False:
-            logger.info('Skipping disabled source: %s', source_cfg.get('name', source_cfg.get('type')))
-            continue
-        source = build_source_from_config(source_cfg)
-        session.register_source(source)
+    session = AcquisitionSession.from_config(cfg)
 
     if not session.sources:
         logger.error('No sources enabled in config.')

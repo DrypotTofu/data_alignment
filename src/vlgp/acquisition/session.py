@@ -54,6 +54,23 @@ class SessionConfig:
 class AcquisitionSession:
     """Orchestrates multiple data sources and writes samples to disk."""
 
+    @classmethod
+    def from_config(cls, config: 'SessionConfig') -> 'AcquisitionSession':
+        """Build a session and register every enabled source from a config.
+
+        Shared by run_acquisition.py and manual_acquisition.py (previously
+        each duplicated the loop; CODE_REVIEW_20260830 2.2).
+        """
+        from .registry import build_source_from_config
+        session = cls(config)
+        for source_cfg in config.sources:
+            if source_cfg.get('enabled') is False:
+                logger.info('Source %s is disabled in config, skipping',
+                            source_cfg.get('name', source_cfg.get('type')))
+                continue
+            session.register_source(build_source_from_config(source_cfg))
+        return session
+
     def __init__(self, config: SessionConfig):
         self.config = config
         self.session_name = config.session_name or self._default_session_name()

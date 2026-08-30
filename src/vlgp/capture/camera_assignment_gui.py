@@ -19,36 +19,21 @@ from tkinter import messagebox, ttk
 import cv2
 import yaml
 
-
-COMMON_RESOLUTIONS = [
-    (1920, 1080),
-    (1280, 720),
-    (1024, 768),
-    (800, 600),
-    (640, 480),
-    (320, 240),
-]
-
-BACKENDS = {'dshow': cv2.CAP_DSHOW, 'msmf': cv2.CAP_MSMF, 'any': cv2.CAP_ANY}
+from vlgp.capture.camera_probe import (
+    BACKENDS,
+    best_working,
+    grab_frame,
+    open_camera,
+    probe_common_resolutions,
+    probe_default_state,
+    save_thumbnail,
+)
 
 DEFAULT_ARM_RESOLUTIONS = {
     1: (640, 480),
     2: (1280, 720),
     3: (640, 480),
 }
-
-THUMB_MAX_WIDTH = 400
-
-
-def save_thumbnail(frame, out_path: Path, max_width: int = THUMB_MAX_WIDTH) -> Path:
-    h, w = frame.shape[:2]
-    if w > max_width:
-        scale = max_width / w
-        thumb = cv2.resize(frame, (max_width, int(h * scale)))
-    else:
-        thumb = frame
-    cv2.imwrite(str(out_path), thumb)
-    return out_path
 
 
 class CameraInfo:
@@ -65,70 +50,37 @@ class CameraInfo:
         self.frame = None
 
     def probe(self) -> bool:
-        backend = BACKENDS.get(self.backend_name, cv2.CAP_DSHOW)
-        cap = cv2.VideoCapture(self.index, backend)
-        if not cap.isOpened():
+        cap = open_camera(self.index, self.backend_name)
+        if cap is None:
             return False
-
         self.available = True
-        time.sleep(0.3)
-        self.default_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.default_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.default_fps = cap.get(cv2.CAP_PROP_FPS)
-
-        for w, h in COMMON_RESOLUTIONS:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-            time.sleep(0.2)
-            actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            actual_fps = cap.get(cv2.CAP_PROP_FPS)
-            ret, f = cap.read()
-            self.resolutions.append({
-                'requested': (w, h),
-                'actual': (actual_w, actual_h),
-                'fps': actual_fps,
-                'frame_read': ret and f is not None and f.size > 0,
-            })
-        cap.release()
+        try:
+            self.default_width, self.default_height, self.default_fps = \
+                probe_default_state(cap)
+        finally:
+            cap.release()
+        self.resolutions = probe_common_resolutions(self.index, self.backend_name)
         return True
 
     def capture_preview(self, out_dir: Path) -> bool:
         if not self.available:
             return False
-        backend = BACKENDS.get(self.backend_name, cv2.CAP_DSHOW)
-        working = [r for r in self.resolutions if r['frame_read']]
-        if working:
-            best = max(working, key=lambda r: r['actual'][0] * r['actual'][1])
+        best = best_working(self.resolutions)
+        if best:
             w, h = best['requested']
         else:
             w, h = self.default_width, self.default_height
 
-        cap = cv2.VideoCapture(self.index, backend)
-        if not cap.isOpened():
-            return False
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-        time.sleep(0.5)
-        actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-        frame = None
-        for _ in range(15):
-            ret, f = cap.read()
-            if ret and f is not None and f.size > 0:
-                frame = f
-                break
-            time.sleep(0.05)
-        cap.release()
-
+        frame = grab_frame(self.index, w, h, self.backend_name)
         if frame is None:
             return False
 
         self.frame = frame
+        actual_h, actual_w = frame.shape[:2]
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         preview_name = f'cam{self.index}_{self.backend_name}_{actual_w}x{actual_h}_{timestamp}.png'
         thumb_name = f'cam{self.index}_{self.backend_name}_{actual_w}x{actual_h}_{timestamp}_thumb.png'
+        out_dir.mkdir(parents=True, exist_ok=True)
         self.preview_path = out_dir / preview_name
         self.thumb_path = out_dir / thumb_name
         cv2.imwrite(str(self.preview_path), frame)
