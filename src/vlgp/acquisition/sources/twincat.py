@@ -86,6 +86,9 @@ class TwinCATConfig:
     ams_net_id: str = '169.254.226.99.1.1'
     ams_port: int = 851  # TC3 default
     ip_address: str = '192.168.22.22'
+    # NOTE (CODE_REVIEW_20260830 2.1): kept for config compatibility; the
+    # installed pyads version's Connection(ams_net_id, ams_net_port,
+    # ip_address) has no local-AMS parameter to pass it into.
     local_ams_net_id: str | None = None
     cycle_period_ms: float = 1.0  # 1 kHz default
     symbols: dict[str, str] | None = None
@@ -595,8 +598,9 @@ class TwinCATWriter:
     T12-P1-2 (2026-08-18): constant connection metadata is written once to
     ``robot_pose/meta.json``; the CSV rows carry only per-sample fields plus
     the full pose/joint/gripper data. Downstream consumers (align_camera_anchor,
-    verify_alignment, analyze_session, calibrate_temporal_drift) read only the
-    per-sample columns — verified list in tech_repo 13.5 / T12 report.
+    verify_alignment, analyze_session) read only the per-sample columns —
+    verified list in tech_repo 13.5 / T12 report (calibrate_temporal_drift
+    was archived 2026-08-30; its drift-fit role is built into align/verify).
     """
 
     def __init__(self, source_name: str, out_dir: Path):

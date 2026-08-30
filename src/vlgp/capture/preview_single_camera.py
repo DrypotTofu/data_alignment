@@ -5,8 +5,8 @@ index overlaid. Press 'q' or ESC to close the current preview; the script then
 asks whether to preview another camera.
 
 Usage:
-    python tools/preview_single_camera.py
-    python tools/preview_single_camera.py --index 0 --width 1280 --height 720
+    python -m vlgp.capture.preview_single_camera
+    python -m vlgp.capture.preview_single_camera --index 0 --width 1280 --height 720
 """
 from __future__ import annotations
 

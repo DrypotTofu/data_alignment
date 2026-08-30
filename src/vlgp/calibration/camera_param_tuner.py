@@ -25,8 +25,8 @@ Keys:
     q / ESC    quit
 
 Usage:
-    python scripts/tools/camera_param_tuner.py --index 1
-    python scripts/tools/camera_param_tuner.py --index 3 --width 1280 --height 960
+    python -m vlgp.calibration.camera_param_tuner --index 1
+    python -m vlgp.calibration.camera_param_tuner --index 3 --width 1280 --height 960
 """
 from __future__ import annotations
 
@@ -166,7 +166,6 @@ def main() -> int:
     print('Adjust trackbars; HUD shows white-paper neutrality and R-clip. s = save, q/ESC = quit.')
 
     readback: dict = {}
-    last_save = time.time()
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -243,7 +242,6 @@ def main() -> int:
             print(f'\nSaved: {save_path}')
             print('YAML snippet for default.yaml:')
             print(yaml_snippet)
-            last_save = time.time()
 
     cap.release()
     cv2.destroyAllWindows()

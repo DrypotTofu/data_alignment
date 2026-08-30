@@ -66,6 +66,14 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+// HTML-escape untrusted strings before interpolating into innerHTML
+// (session names come from the filesystem; never trust them).
+function esc(v) {
+  return String(v).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 function fmt(v, digits = 2) {
   if (v === null || v === undefined) return '—';
   if (Array.isArray(v)) return v.map((x) => fmt(x, digits)).join(', ');
@@ -98,9 +106,19 @@ async function loadSessions() {
   for (const s of sessions) {
     const li = document.createElement('li');
     const ann = s.annotations || {};
-    const badge = s.has_alignment ? '' : '<span class="badge">未对齐</span>';
-    li.innerHTML = `${s.name}${badge}<span class="sub">${s.n_rows} 行 · ${ann.status || 'pending'}` +
-      (ann.trim ? ` · [${ann.trim.start_row}, ${ann.trim.end_row}]` : '') + '</span>';
+    li.appendChild(document.createTextNode(s.name));          // no innerHTML
+    if (!s.has_alignment) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = '未对齐';
+      li.appendChild(badge);
+    }
+    const sub = document.createElement('span');
+    sub.className = 'sub';
+    let t = `${s.n_rows} 行 · ${ann.status || 'pending'}`;
+    if (ann.trim) t += ` · [${ann.trim.start_row}, ${ann.trim.end_row}]`;
+    sub.textContent = t;
+    li.appendChild(sub);
     li.onclick = () => selectSession(s.name);
     ul.appendChild(li);
   }
@@ -167,6 +185,13 @@ async function selectSession(name) {
   // invalidate the previous session's preload/cache before loading the new one
   state.preloadGen += 1;
   state.preloadTimer = null;
+  for (const cam of Object.keys(state.frameCache)) {   // revoke object URLs
+    const c = state.frameCache[cam];
+    if (!c) continue;
+    for (const im of c.values()) {
+      if (im && im._url) URL.revokeObjectURL(im._url);
+    }
+  }
   state.frameCache = {};
   state.crit = {};
   state.lastDraw = {};
@@ -704,7 +729,7 @@ function renderArmStatus() {
     ['能量状态', fmt(a.energy_instrument_status, 0)],
   ];
   box.innerHTML = rows.map(([k, v]) =>
-    `<span class="k">${k}</span><span class="v${v === '—' ? ' na' : ''}">${v}</span>`
+    `<span class="k">${esc(k)}</span><span class="v${v === '—' ? ' na' : ''}">${esc(v)}</span>`
   ).join('');
 }
 

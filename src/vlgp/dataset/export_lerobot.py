@@ -49,21 +49,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from vlgp.acquisition import session_layout as sl
+from vlgp.constants import ARMS, CAMERA_STREAMS, FILENAME_COLS
 
 logger = logging.getLogger('export_lerobot')
 
-ARMS = (1, 2, 3, 4)
 CAMERA_KEYS = {
     'camera_arm_2': 'observation.images.camera_arm_2',   # endoscope (anchor)
     'camera_arm_1': 'observation.images.camera_arm_1',   # wrist left
     'camera_arm_3': 'observation.images.camera_arm_3',   # wrist right
-}
-# filename column in actions.parquet per camera dir
-FILENAME_COLS = {
-    'camera_arm_2': 'anchor_filename',
-    'camera_arm_1': 'camera_arm_1_filename',
-    'camera_arm_3': 'camera_arm_3_filename',
 }
 STATE_COLS = [f'arm{a}_{c}'
               for a in ARMS
@@ -74,17 +67,16 @@ STATE_NAMES = [f'arm{a}_{c}'
                for a in ARMS
                for c in ('pos_x', 'pos_y', 'pos_z',
                          'qw', 'qx', 'qy', 'qz', 'gripper')]
+# 40-dim SRT-H action; the same names serve as the parquet source columns
+# and the LeRobot feature names (previously duplicated as ACTION_NAMES).
 ACTION_COLS = ([f'arm{a}_delta_pos_{c}' for a in ARMS for c in ('x', 'y', 'z')]
                + [f'arm{a}_delta_rot_6d_{k}' for a in ARMS for k in range(6)]
                + [f'arm{a}_jaw' for a in ARMS])
-ACTION_NAMES = ([f'arm{a}_delta_pos_{c}' for a in ARMS for c in ('x', 'y', 'z')]
-                + [f'arm{a}_delta_rot_6d_{k}' for a in ARMS for k in range(6)]
-                + [f'arm{a}_jaw' for a in ARMS])
+ACTION_NAMES = ACTION_COLS
 INSTRUMENT_COLS = [f'arm{a}_instrument_type' for a in ARMS]
 ACTIVE_COLS = [f'arm{a}_active' for a in ARMS]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SESSIONS_ROOT = REPO_ROOT / 'sessions'
 
 
 def build_features(img_sizes: dict[str, tuple[int, int]]) -> dict:
@@ -112,8 +104,7 @@ def build_features(img_sizes: dict[str, tuple[int, int]]) -> dict:
 
 def resolve_frame_dir(episode_dir: Path, cam: str) -> Path | None:
     """Where frames for ``cam`` live: obs/<stream>/ first, else source session."""
-    stream = {'camera_arm_2': 'endoscope', 'camera_arm_1': 'wrist_left',
-              'camera_arm_3': 'wrist_right'}[cam]
+    stream = CAMERA_STREAMS[cam]
     obs = episode_dir / 'obs' / stream
     if obs.is_dir() and any(obs.iterdir()):
         return obs
@@ -125,7 +116,6 @@ def resolve_frame_dir(episode_dir: Path, cam: str) -> Path | None:
 
 def export_episode(
     dataset, episode_dir: Path, task: str, episode_index: int,
-    img_sizes: dict[str, tuple[int, int]] | None = None,
     parallel_encoding: bool = False,
 ) -> dict:
     """Add one internal episode to the dataset via the official API."""
@@ -137,7 +127,6 @@ def export_episode(
         if d is None:
             raise FileNotFoundError(f'no frame source for {cam} in {episode_dir}')
 
-    seen_size: dict[str, tuple[int, int]] = {}
     n = len(df)
     for i, (_, row) in enumerate(df.iterrows()):
         state = np.asarray([float(row[c]) for c in STATE_COLS], dtype=np.float32)
@@ -164,7 +153,6 @@ def export_episode(
             img = cv2.imread(str(frame_dirs[cam] / fname))
             if img is None:
                 raise FileNotFoundError(f'{cam}: cannot read {fname}')
-            seen_size[cam] = (img.shape[0], img.shape[1])
             # cv2 reads BGR; lerobot's video pipeline (temp PNG + encode) is
             # RGB throughout — convert here or the exported videos have
             # swapped R/B channels (roundtrip mean|diff| ~20+ vs <5 after fix).
@@ -173,10 +161,6 @@ def export_episode(
         if (i + 1) % 200 == 0 or i + 1 == n:
             logger.info(f'  episode {episode_index}: frame {i + 1}/{n}')
     dataset.save_episode(parallel_encoding=parallel_encoding)
-
-    if img_sizes is not None:
-        for cam in CAMERA_KEYS:
-            img_sizes[cam] = seen_size[cam]
     return {'episode_index': episode_index, 'n_frames': n,
             'task': task, 'source': str(episode_dir)}
 

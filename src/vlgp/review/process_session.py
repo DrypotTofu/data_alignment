@@ -10,9 +10,9 @@ After the review GUI closes, annotations.json is inspected: sessions marked
 "rejected" stop here (nothing to build); anything else proceeds.
 
 Usage:
-    python scripts/tools/process_session.py --session sessions/20260818_215014
-    python scripts/tools/process_session.py --session sessions/20260818_215014 --meta
-    python scripts/tools/process_session.py --session sessions/20260818_215014 --skip-review
+    python -m vlgp.review.process_session --session sessions/20260818_215014
+    python -m vlgp.review.process_session --session sessions/20260818_215014 --meta
+    python -m vlgp.review.process_session --session sessions/20260818_215014 --skip-review
 """
 from __future__ import annotations
 
@@ -86,35 +86,39 @@ def main() -> int:
     session_dir = resolve_session(args.session)
     print(f'Session: {session_dir}')
 
+    # Build the step list dynamically so numbering stays correct when
+    # --meta / --skip-review / --skip-video change what actually runs.
+    steps: list[tuple[str, str, list[str]]] = []
     if args.meta:
-        run_step('1/6 session metadata (interactive)', STEP_MODULES['write_session_meta'],
-                 ['--session', str(session_dir)])
-
-    run_step('2/6 alignment precheck', STEP_MODULES['verify_alignment'],
-             ['--session', str(session_dir)])
-    run_step('3/6 build 30 Hz alignment table', STEP_MODULES['align_camera_anchor'],
-             ['--session', str(session_dir)])
-
+        steps.append(('session metadata (interactive)', STEP_MODULES['write_session_meta'],
+                      ['--session', str(session_dir)]))
+    steps.append(('alignment precheck', STEP_MODULES['verify_alignment'],
+                  ['--session', str(session_dir)]))
+    steps.append(('build 30 Hz alignment table', STEP_MODULES['align_camera_anchor'],
+                  ['--session', str(session_dir)]))
     if not args.skip_review:
-        run_step('4/6 human review / trim (GUI closes to continue)', STEP_MODULES['review_session'],
-                 ['--session', str(session_dir)])
-        status = review_outcome(session_dir)
-        print(f'Review outcome: {status}')
-        if status == 'rejected':
-            print('[STOP] Session marked rejected; nothing to build. '
-                  'annotations.json kept as the decision record.')
-            return 0
-
-    run_step('5/6 build SRT-H episode', STEP_MODULES['build_srth_dataset'],
-             ['--session', str(session_dir)])
-
+        steps.append(('human review / trim (GUI closes to continue)',
+                      STEP_MODULES['review_session'], ['--session', str(session_dir)]))
+    steps.append(('build SRT-H episode', STEP_MODULES['build_srth_dataset'],
+                  ['--session', str(session_dir)]))
     if not args.skip_video:
         for cam in CAMERA_DIRS:
             arm = cam.rsplit('_', 1)[-1]
-            run_step(f'6/6 preview video ({cam})', STEP_MODULES['images_to_video'],
-                     ['--dir', str(session_dir / cam),
-                      '--output', str(session_dir / f'arm{arm}_preview.mp4'),
-                      '--timestamp-overlay'])
+            steps.append((f'preview video ({cam})', STEP_MODULES['images_to_video'],
+                          ['--dir', str(session_dir / cam),
+                           '--output', str(session_dir / f'arm{arm}_preview.mp4'),
+                           '--timestamp-overlay']))
+
+    total = len(steps)
+    for i, (label, module, cmd) in enumerate(steps, 1):
+        run_step(f'{i}/{total} {label}', module, cmd)
+        if label.startswith('human review'):
+            status = review_outcome(session_dir)
+            print(f'Review outcome: {status}')
+            if status == 'rejected':
+                print('[STOP] Session marked rejected; nothing to build. '
+                      'annotations.json kept as the decision record.')
+                return 0
 
     print('\n[DONE] Session pipeline finished.')
     return 0

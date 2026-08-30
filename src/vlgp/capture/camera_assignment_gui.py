@@ -5,8 +5,8 @@ lets you pick which arm each camera belongs to. Updates the acquisition YAML
 config when you click Save.
 
 Usage:
-    python tools/camera_assignment_gui.py
-    python tools/camera_assignment_gui.py --config config/default.yaml
+    python -m vlgp.capture.camera_assignment_gui
+    python -m vlgp.capture.camera_assignment_gui --config config/default.yaml
 """
 from __future__ import annotations
 
@@ -313,7 +313,7 @@ class AssignmentApp:
 def main():
     parser = argparse.ArgumentParser(description='GUI camera-to-arm assignment')
     parser.add_argument('--config', type=str,
-                        default=str(Path(__file__).parents[1] / 'config' / 'default.yaml'),
+                        default=str(Path(__file__).parents[3] / 'scripts' / 'config' / 'default.yaml'),
                         help='Path to YAML config file')
     parser.add_argument('--indices', type=int, nargs='+', default=list(range(10)),
                         help='Camera indices to probe (default: 0-9)')

@@ -5,11 +5,11 @@ order and timestamps. It can either use a user-supplied FPS or compute the
 average FPS from the metadata.
 
 Usage:
-    python tools/images_to_video.py --dir sessions/<session>/camera_arm_1 \
+    python -m vlgp.dataset.images_to_video --dir sessions/<session>/camera_arm_1 \
         --output out.mp4 --fps 30
 
     # Burn Beijing timestamps into each frame
-    python tools/images_to_video.py --dir sessions/<session>/camera_arm_1 \
+    python -m vlgp.dataset.images_to_video --dir sessions/<session>/camera_arm_1 \
         --output out.mp4 --timestamp-overlay
 
 Codec notes:
@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
-import sys
 from pathlib import Path
 
 import cv2

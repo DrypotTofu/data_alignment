@@ -1,12 +1,11 @@
 """Verify cross-modal alignment between video frames and TwinCAT poses.
 
 Usage:
-    python scripts/tools/verify_alignment.py --session sessions/test_20260803_104724
+    python -m vlgp.alignment.verify_alignment --session sessions/test_20260803_104724
 """
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -35,12 +34,6 @@ def fit_plc_pc_clock_model(twincat_df: pd.DataFrame) -> tuple[LinearClockFit, di
         'freq_ppm': (fit.slope - 1.0) * 1e6,
     }
     return fit, diag
-
-
-def fit_plc_pc_model(twincat_path: Path) -> tuple[float, float, dict]:
-    """Compatibility wrapper returning (k, b, diagnostics)."""
-    fit, diag = fit_plc_pc_clock_model(pd.read_csv(twincat_path))
-    return fit.slope, fit.intercept, diag
 
 
 def align_video_to_twincat(

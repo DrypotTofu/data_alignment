@@ -8,16 +8,15 @@ acquisition framework core.
 Optionally merges the fields into ``session.json`` (off by default).
 
 Usage:
-    python scripts/tools/write_session_meta.py --session sessions/20260817_203000
-    python scripts/tools/write_session_meta.py --session sessions/20260817_203000 \
+    python -m vlgp.review.write_session_meta --session sessions/20260817_203000
+    python -m vlgp.review.write_session_meta --session sessions/20260817_203000 \
         --json session_meta_input.json
-    python scripts/tools/write_session_meta.py --session ... --merge-session-json
+    python -m vlgp.review.write_session_meta --session ... --merge-session-json
 """
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 TASK_TYPES = [
@@ -77,7 +76,9 @@ def interactive_prompt(meta: dict) -> dict:
 def load_json_input(path: Path, template: dict) -> dict:
     data = json.loads(path.read_text(encoding='utf-8'))
     meta = dict(template)
-    meta.update({k: v for k, v in data.items() if k in template or k not in template})
+    # Only copy fields that exist in the template; extra input keys are dropped
+    # so session_meta.json always matches the known schema.
+    meta.update({k: v for k, v in data.items() if k in template})
     return meta
 
 

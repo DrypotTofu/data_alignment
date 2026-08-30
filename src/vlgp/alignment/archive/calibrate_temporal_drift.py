@@ -1,4 +1,7 @@
-"""Calibrate video frame timestamps onto the TwinCAT PLC time axis.
+"""ARCHIVED 2026-08-30 (CODE_REVIEW_20260830 H4): no active consumers — the
+drift-fit role is built into align_camera_anchor / verify_alignment.
+
+Calibrate video frame timestamps onto the TwinCAT PLC time axis.
 
 After a recording, PC and PLC crystal drift means that online timestamps
 (which used ``clock_source: twincat_master``) can slowly diverge from the

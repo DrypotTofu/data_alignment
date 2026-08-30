@@ -18,14 +18,13 @@ range and a provisional convention (larger angle = more open, dVRK-style)
 which ``build_srth_dataset.py`` makes invertible via its ``jaw_invert`` flag.
 
 Usage:
-    python scripts/tools/analyze_gripper.py [--sessions-dir sessions]
+    python -m vlgp.analysis.analyze_gripper [--sessions-dir sessions]
                                             [--out var/gripper_analysis.json]
 """
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -68,16 +67,13 @@ def analyze_session(session_dir: Path) -> dict:
         if legacy is not None:
             df = pd.read_csv(legacy)
             if 'arm' in df.columns:
-                for arm_id in sorted(df['arm'].unique()):
-                    arms[int(arm_id)] = None  # placeholder, replaced below
-                for arm_id, _ in list(arms.items()):
-                    arms[arm_id] = legacy
+                arms = {int(arm_id): legacy for arm_id in sorted(df['arm'].unique())}
             else:
                 arms = {1: legacy}
     for arm_id in sorted(arms):
         path = arms[arm_id]
         df = pd.read_csv(path)
-        if 'arm' in df.columns and arm_id is not None:
+        if 'arm' in df.columns:
             df = df[df['arm'] == arm_id]
         entry: dict = {}
         if ANGLE_COL in df.columns:
@@ -193,7 +189,7 @@ def main() -> int:
     print(json.dumps(conclusion, ensure_ascii=False, indent=2))
 
     out = {
-        'generated_by': 'scripts/tools/analyze_gripper.py (T1)',
+        'generated_by': 'vlgp.analysis.analyze_gripper (T1)',
         'per_arm_global': agg,
         'direction': conclusion,
     }

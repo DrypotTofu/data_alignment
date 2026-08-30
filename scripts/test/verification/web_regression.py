@@ -259,7 +259,8 @@ def main() -> int:
             continue
         s, body, _ = put(base, f'/api/sessions/{name}/annotations',
                          {'version': 1, 'reviewed_by': '', 'reviewed_at': '', 'status': 'rejected',
-                          'reject_reason': '', 'trim': {'start_row': 0, 'end_row': 0},
+                          'reject_reason': 'rejected in review',   # contract: required for rejected
+                          'trim': {'start_row': 0, 'end_row': 0},
                           'segments': [], 'flags': [], 'notes': 'regression'})
         check(f'review {name} (rejected)', s == 200, '')
     _, body, _ = get(base, '/api/review/queue')

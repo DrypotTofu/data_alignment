@@ -5,8 +5,8 @@ Enter to begin recording, then waits for another Enter (or Ctrl-C) to stop.
 Useful when the recording length is not known in advance.
 
 Usage:
-    python tools/manual_acquisition.py --config config/default.yaml
-    python tools/manual_acquisition.py --config config/default.yaml --name my_session
+    python -m vlgp.capture.manual_acquisition --config config/default.yaml
+    python -m vlgp.capture.manual_acquisition --config config/default.yaml --name my_session
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def print_status(session: AcquisitionSession, stop_event: threading.Event,
 def main() -> int:
     parser = argparse.ArgumentParser(description='Manual start/stop acquisition')
     parser.add_argument('--config', type=str,
-                        default=str(Path(__file__).parents[1] / 'config' / 'default.yaml'),
+                        default=str(Path(__file__).parents[3] / 'scripts' / 'config' / 'default.yaml'),
                         help='Path to YAML config file')
     parser.add_argument('--name', type=str, default=None,
                         help='Override session name')
@@ -88,7 +88,7 @@ def main() -> int:
         source = build_source_from_config(source_cfg)
         session.register_source(source)
 
-    if not session._sources:
+    if not session.sources:
         logger.error('No sources enabled in config.')
         return 1
 
@@ -96,7 +96,7 @@ def main() -> int:
     print('Manual acquisition mode')
     print(f'Config: {Path(args.config).resolve()}')
     print(f'Session: {session.session_name}')
-    print(f'Sources: {", ".join(session._sources.keys())}')
+    print(f'Sources: {", ".join(session.sources.keys())}')
     print('=' * 70)
 
     print('\nPress Enter to START recording...')

@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from vlgp.annotations.task_hierarchy import TaskHierarchy
 from vlgp.web.frame_service import FrameService, PreloadRegistry
@@ -36,6 +36,10 @@ from vlgp.web.session_index import (
 
 STATIC_DIR = Path(__file__).parent / 'static'
 DEFAULT_PORT = 8765
+# Single-process deployment assumption (CODE_REVIEW_20260830 三.8): the
+# preload registry and the JPEG LRU are module-level and only grow; with
+# multiple create_app() instances the LRU keys on SessionIndex identity and
+# would miss. Fine for the shipped one-server setup.
 _PRELOAD_REGISTRY = PreloadRegistry()
 
 VALID_STATUS = {'pending', 'approved', 'rejected'}
@@ -58,6 +62,20 @@ class BatchIn(BaseModel):
     rows: list[int] = []
     max_width: int = 480
 
+    @field_validator('max_width')
+    @classmethod
+    def _clamp_max_width(cls, v: int) -> int:
+        """Clamp to [32, 1280]: absurd values would upscale instead of
+        downscale (resource abuse via a public endpoint)."""
+        return min(1280, max(32, int(v)))
+
+    @field_validator('rows')
+    @classmethod
+    def _limit_rows(cls, v: list[int]) -> list[int]:
+        if len(v) > 512:
+            raise ValueError('rows: at most 512 per request')
+        return v
+
 
 def create_app(index: SessionIndex | None = None) -> FastAPI:
     index = index or SessionIndex()
@@ -69,9 +87,12 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
         hier = None
 
     app = FastAPI(title='VLGP Web Platform', version='0.1.0')
+    # Same-origin app (page + API both served from 127.0.0.1:<port>) — CORS is
+    # not needed for the app itself; restrict to local origins instead of '*'.
     app.add_middleware(
-        CORSMiddleware, allow_origins=['*'], allow_methods=['*'],
-        allow_headers=['*'])
+        CORSMiddleware, allow_origins=[
+            'http://127.0.0.1:8765', 'http://localhost:8765',
+        ], allow_methods=['*'], allow_headers=['*'])
 
     # ------------------------------------------------------------- sessions
     @app.get('/api/sessions')
@@ -132,6 +153,7 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
     def frame(name: str, cam: str, row: int, max_width: int = 960):
         if cam not in CAMERA_ORDER:
             raise HTTPException(404, f'unknown camera {cam!r}')
+        max_width = min(1280, max(32, int(max_width)))   # clamp (see BatchIn)
         try:
             data = frames.jpeg(name, cam, row, max_width)
         except (SessionNotFound, NoAlignment) as e:
@@ -143,6 +165,8 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
 
     @app.post('/api/sessions/{name}/frames/batch')
     def frames_batch(name: str, body: BatchIn):
+        """base64 JSON batch — kept for compatibility with older tests only;
+        the web player uses /frames/batch-bin (三.7)."""
         if body.cam not in CAMERA_ORDER:
             raise HTTPException(404, f'unknown camera {body.cam!r}')
         try:
@@ -278,7 +302,12 @@ def _validate_annotations(body: AnnotationsIn, index: SessionIndex,
                 problems.append('trim rows must be ints')
             elif not (0 <= s0 <= s1 < n):
                 problems.append(f'trim [{s0}, {s1}] out of range [0, {n})')
-    if body.segments and hier is not None:
+    if body.segments:
+        if hier is None:
+            # vocab missing/corrupt: never silently accept unvalidated segments
+            raise HTTPException(
+                503, 'task_hierarchy.yaml unavailable — segment validation '
+                     'cannot run; fix or restore the vocabulary file')
         problems.extend(f'segments: {p}' for p in hier.validate_segments(body.segments))
         for i, seg in enumerate(body.segments):
             for key in ('start_row', 'end_row'):

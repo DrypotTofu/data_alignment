@@ -15,15 +15,10 @@ import numpy as np
 import pandas as pd
 
 from vlgp.acquisition import session_layout as sl
+from vlgp.constants import ARMS, CAMERA_ORDER, FILENAME_COLS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SESSIONS_ROOT = REPO_ROOT / 'sessions'
-
-CAMERA_ORDER = ('camera_arm_2', 'camera_arm_1', 'camera_arm_3')
-FILENAME_COLS = {'camera_arm_2': 'anchor_filename',
-                 'camera_arm_1': 'camera_arm_1_filename',
-                 'camera_arm_3': 'camera_arm_3_filename'}
-ARMS = (1, 2, 3, 4)
 
 DEFAULT_ANNOTATIONS = {
     'version': 1,
@@ -136,7 +131,7 @@ class SessionIndex:
         NaN fields (pose-invalid rows) become None. Includes the instrument
         label via vlgp's instrument table.
         """
-        from vlgp.dataset.build_srth_dataset import instrument_label
+        from vlgp.annotations.instruments import instrument_label
         df = self.alignment(name)
         if not 0 <= row < len(df):
             raise IndexError(f'row {row} out of range [0, {len(df)})')

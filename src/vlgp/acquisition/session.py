@@ -113,6 +113,11 @@ class AcquisitionSession:
         """Public access to sources that must run in the main thread."""
         return [s for s in self._sources.values() if s.runs_in_main_thread]
 
+    @property
+    def sources(self) -> dict[str, DataSource]:
+        """Public read-only view of registered sources (name -> source)."""
+        return dict(self._sources)
+
     def _signal_handler(self, signum, frame) -> None:
         logger.info('Received signal %s, stopping session gracefully...', signum)
         self.stop()

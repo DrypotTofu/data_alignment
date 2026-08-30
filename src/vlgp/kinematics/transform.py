@@ -28,7 +28,11 @@ def kabsch(A: np.ndarray, B: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]
     """
     A = np.asarray(A, dtype=np.float64)
     B = np.asarray(B, dtype=np.float64)
-    assert A.shape == B.shape and A.ndim == 2 and A.shape[1] == 3
+    if not (A.shape == B.shape and A.ndim == 2 and A.shape[1] == 3):
+        raise ValueError(
+            f'A and B must be (N, 3) point sets with matching shapes, '
+            f'got A.shape={A.shape}, B.shape={B.shape}'
+        )
     cA = A.mean(axis=0)
     cB = B.mean(axis=0)
     H = (A - cA).T @ (B - cB)
@@ -40,25 +44,6 @@ def kabsch(A: np.ndarray, B: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]
     resid = B - (A @ R.T + t)
     rms = float(np.sqrt((resid ** 2).sum(axis=1).mean()))
     return R, t, rms
-
-
-def self_check() -> dict[str, str]:
-    """Verify Kabsch recovers a known rigid transform under small noise."""
-    rng = np.random.default_rng(42)
-    from scipy.spatial.transform import Rotation as Rot
-    R_true = Rot.from_euler('xyz', [10, -20, 35], degrees=True).as_matrix()
-    t_true = np.array([150.0, -80.0, 200.0])
-    A = rng.uniform(-100, 100, size=(500, 3))
-    B = A @ R_true.T + t_true + rng.normal(0, 0.5, size=A.shape)
-    R, t, _ = kabsch(A, B)
-    rel = R @ R_true.T
-    rot_err = float(np.degrees(np.arccos(np.clip((np.trace(rel) - 1) / 2, -1, 1))))
-    trans_err = float(np.linalg.norm(t - t_true))
-    results = {
-        'kabsch_rot_err_deg': 'PASS' if rot_err < 0.05 else 'FAIL',
-        'kabsch_trans_err_mm': 'PASS' if trans_err < 0.5 else 'FAIL',
-    }
-    return results
 
 
 def paired_points_from_session(session_dir: Path) -> np.ndarray | None:

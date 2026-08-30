@@ -21,14 +21,13 @@ Supports both layouts:
   - legacy:     robot_pose/twincat_poses.csv (filtered by the ``arm`` column)
 
 Usage:
-    python scripts/tools/align_camera_anchor.py --session sessions/test_20260803_104724
-    python scripts/tools/align_camera_anchor.py --session sessions/xxx --anchor camera_arm_2 \
+    python -m vlgp.alignment.align_camera_anchor --session sessions/test_20260803_104724
+    python -m vlgp.alignment.align_camera_anchor --session sessions/xxx --anchor camera_arm_2 \
         --cameras camera_arm_1 camera_arm_3 --include-joints
 """
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 from typing import Callable
 

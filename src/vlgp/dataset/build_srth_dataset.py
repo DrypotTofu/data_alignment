@@ -54,22 +54,23 @@ Unit self-tests (quaternion reorder / identity / 90 deg rotation / SLERP /
 relative rotation) run automatically at startup; ``--skip-self-test`` disables.
 
 Usage:
-    python scripts/tools/build_srth_dataset.py --session sessions/test_xxx
-    python scripts/tools/build_srth_dataset.py --session sessions/test_xxx --no-copy
+    python -m vlgp.dataset.build_srth_dataset --session sessions/test_xxx
+    python -m vlgp.dataset.build_srth_dataset --session sessions/test_xxx --no-copy
 """
 from __future__ import annotations
 
 import argparse
 import json
 import shutil
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 
-ARMS = (1, 2, 3, 4)
+from vlgp.annotations.instruments import INSTRUMENT_NAME, instrument_label  # noqa: F401 (re-exported for compat)
+from vlgp.constants import ARMS, CAMERA_STREAMS
+
 ARM_KEYS = [f'arm{a}' for a in ARMS]
 POS_COLS = [f'arm{a}_{c}' for a in ARMS for c in ('position_x', 'position_y', 'position_z')]
 SCOPE_COLS = [f'arm{a}_scope_position_{c}' for a in ARMS
@@ -78,33 +79,6 @@ ORIENT_COLS = [f'arm{a}_orientation_{c}' for a in ARMS
                for c in ('w', 'x', 'y', 'z')]
 GRIPPER_COLS = [f'arm{a}_gripper_angle' for a in ARMS]
 INSTRUMENT_COLS = [f'arm{a}_instrument_type' for a in ARMS]
-
-# T14: instrument type code -> Chinese name lookup.
-# Source: tech_repo/器械编码对照表.md (2026-08-20). Codes outside this table are
-# kept as raw ids with a warning (never abort the build).
-INSTRUMENT_NAME = {
-    0: '无器械/未知器械',
-    1: '大号持针钳',
-    2: '特大号持针钳',
-    3: '大力抓取钳',
-    4: '圆头抓取钳',
-    5: '直剪刀',
-    6: '弯剪刀',
-    7: '单极弧剪',
-    8: '单极电钩',
-    9: '单极电铲',
-    10: '双极尖头抓钳',
-    11: '双极圆头抓钳',
-    12: '超声刀头',
-    13: '内窥镜',
-}
-
-
-def instrument_label(code: float) -> str:
-    """Return the Chinese name for an instrument_type code, or the raw id."""
-    if code == code and int(code) in INSTRUMENT_NAME:  # not NaN
-        return INSTRUMENT_NAME[int(code)]
-    return f'unknown-{code}'
 
 
 # ---------------------------------------------------------------------------
@@ -306,8 +280,7 @@ def motion_active_mask(actions: pd.DataFrame, pos_mm: float, rot_deg: float) -> 
 def _copy_frames(session_dir: Path, cam_name: str, frame_files: list[str],
                  out_dir: Path, manifest: dict, copy: bool) -> list[str]:
     """Copy/register the kept frames of one camera into obs/<stream>/."""
-    stream = {'camera_arm_2': 'endoscope', 'camera_arm_1': 'wrist_left',
-              'camera_arm_3': 'wrist_right'}.get(cam_name, cam_name)
+    stream = CAMERA_STREAMS.get(cam_name, cam_name)
     dst = out_dir / 'obs' / stream
     dst.mkdir(parents=True, exist_ok=True)
     src_dir = session_dir / cam_name
@@ -478,8 +451,7 @@ def main() -> int:
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest: dict = {}
-    stream_map = {'camera_arm_2': 'endoscope', 'camera_arm_1': 'wrist_left',
-                  'camera_arm_3': 'wrist_right'}
+    stream_map = CAMERA_STREAMS
     # The anchor camera's frames live in ``anchor_filename`` (align tool);
     # the other cameras carry ``<camera>_filename`` columns.
     filename_col = {'camera_arm_2': 'anchor_filename',
@@ -586,7 +558,7 @@ def main() -> int:
         'episode_id': session_dir.name,
         'source_session': str(session_dir),
         'source_alignment': str(align_path),
-        'generated_by': 'scripts/tools/build_srth_dataset.py',
+        'generated_by': 'vlgp.dataset.build_srth_dataset',
         'grid_hz': 30.0,
         'sample_count': int(n_chunks),
         'action_dim': 40,

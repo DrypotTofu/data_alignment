@@ -7,7 +7,6 @@ resolution. The subprocess writes frames and metadata.csv directly to disk.
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 import sys
 import time

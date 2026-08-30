@@ -5,8 +5,8 @@ frame for each working camera so you can visually identify which index
 belongs to which physical camera (endoscope / left arm / right arm).
 
 Usage:
-    python tools/preview_connected_cameras.py
-    python tools/preview_connected_cameras.py --indices 0 1 2 3 --out-dir ./camera_test_frames
+    python -m vlgp.capture.preview_connected_cameras
+    python -m vlgp.capture.preview_connected_cameras --indices 0 1 2 3 --out-dir ./camera_test_frames
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def try_camera(index: int, backend_name: str = 'dshow'):
     default_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     default_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     default_fps = cap.get(cv2.CAP_PROP_FPS)
-    ret, default_frame = cap.read()
+    default_ret, default_frame = cap.read()
     cap.release()
 
     # Probe common resolutions
@@ -76,7 +76,7 @@ def try_camera(index: int, backend_name: str = 'dshow'):
             'width': default_w,
             'height': default_h,
             'fps': default_fps,
-            'frame_read': ret and default_frame is not None and default_frame.size > 0,
+            'frame_read': default_ret and default_frame is not None and default_frame.size > 0,
         },
         'resolutions': resolutions,
     }

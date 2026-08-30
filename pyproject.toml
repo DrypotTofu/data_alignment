@@ -16,11 +16,15 @@ dependencies = [
     "pyads",
     "pyarrow",
     "PyQt5",
+    "matplotlib",
+    # web platform (T15) + LeRobot export (T17)
+    "fastapi",
+    "uvicorn[standard]",
+    "lerobot==0.4.4",
 ]
 
 [project.scripts]
 vlgp-acquire = "vlgp.capture.manual_acquisition:main"
-vlgp-run = "vlgp.capture.manual_acquisition:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

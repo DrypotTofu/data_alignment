@@ -1,13 +1,12 @@
 """Comprehensive session analysis: alignment, timing, sampling stability, trajectory.
 
 Usage:
-    python scripts/tools/analyze_session.py --session sessions/test_20260803_104724
+    python -m vlgp.analysis.analyze_session --session sessions/test_20260803_104724
 """
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import matplotlib
@@ -109,16 +108,19 @@ def analyze_twincat(robot_df: pd.DataFrame, out_dir: Path, make_plots: bool = Tr
         plt.savefig(out_dir / 'twincat_sampling_interval.png', dpi=150)
         plt.close()
 
-    # Clock drift: PLC vs PC
-    if 'timestamp_ns_pc' in robot_df.columns and 'timestamp_ns_plc' in robot_df.columns:
+    # Clock drift: PLC master axis vs PC. Align/verify fit timestamp_ns
+    # (canonical master axis, always present) against timestamp_ns_pc;
+    # timestamp_ns_plc is dual-mode-only and would silently skip this
+    # branch for pc_arrival sessions (CODE_REVIEW_20260830 2.3).
+    if 'timestamp_ns_pc' in robot_df.columns and 'timestamp_ns' in robot_df.columns:
         pc = robot_df['timestamp_ns_pc'].values.astype(np.float64)
-        plc = robot_df['timestamp_ns_plc'].values.astype(np.float64)
+        plc = robot_df['timestamp_ns'].values.astype(np.float64)
         clock_fit = fit_linear_timestamps(pc, plc)
         k = clock_fit.slope
         b = clock_fit.intercept
         residuals = np.asarray(clock_fit.residuals, dtype=np.float64)
 
-        print(f'  PLC-PC 时钟漂移模型: timestamp_ns_plc = {k:.12f} * timestamp_ns_pc + {b:.0f}')
+        print(f'  PLC-PC 时钟漂移模型: timestamp_ns = {k:.12f} * timestamp_ns_pc + {b:.0f}')
         print(f'  频率偏差: {(k - 1.0) * 1e6:+.3f} ppm')
         print(f'  残差标准差: {clock_fit.residual_std:.0f} ns')
         print(f'  残差最大绝对值: {clock_fit.residual_max_abs:.0f} ns')
@@ -215,7 +217,6 @@ def analyze_cameras(
 
 
 def analyze_cross_modal(
-    session_info: dict,
     robot_df: pd.DataFrame,
     cameras: dict[str, pd.DataFrame],
     out_dir: Path,
@@ -365,7 +366,7 @@ def main() -> int:
     results['twincat'] = analyze_twincat(robot_df, out_dir, make_plots=make_plots)
     results['cameras'] = analyze_cameras(cameras, out_dir, make_plots=make_plots)
     results['cross_modal'] = analyze_cross_modal(
-        session_info, robot_df, cameras, out_dir, make_plots=make_plots,
+        robot_df, cameras, out_dir, make_plots=make_plots,
     )
     results['trajectory'] = analyze_trajectory(robot_df, out_dir, make_plots=make_plots)
 

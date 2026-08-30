@@ -111,7 +111,7 @@ def capture_loop(
     while not stop_event.is_set():
         ret, frame = cap.read()
         if not ret:
-            logger.error('Camera %d frame read failed — camera may have died', cap.get(cv2.CAP_PROP_POS_MSEC))
+            logger.error('Camera %s frame read failed — camera may have died', cap.get(cv2.CAP_PROP_POS_MSEC))
             return False
 
         now = time.time()
@@ -201,8 +201,10 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description='USB camera capture worker process')
     parser.add_argument('--index', type=int, required=True)
-    parser.add_argument('--width', type=int, required=True)
-    parser.add_argument('--height', type=int, required=True)
+    parser.add_argument('--width', type=int, default=None,
+                        help='Requested frame width. None = driver default.')
+    parser.add_argument('--height', type=int, default=None,
+                        help='Requested frame height. None = driver default.')
     parser.add_argument('--fps', type=int, default=None)
     parser.add_argument('--fourcc', type=str, default='MJPG')
     parser.add_argument('--backend', type=str, default='dshow')
@@ -233,8 +235,8 @@ def main() -> None:
     parser.add_argument('--ready-file', type=str, default='.ready',
                         help='Filename written after the first frame is captured')
     parser.add_argument('--exposure', type=float, default=None,
-                        help='Manual exposure (CAP_PROP_EXPOSURE). If None, the '
-                             'default -6 is applied (as before).')
+                        help='Manual exposure (CAP_PROP_EXPOSURE). None = driver '
+                             'default.')
     parser.add_argument('--wb-temperature', type=float, default=None,
                         help='Manual white-balance colour temperature in Kelvin '
                              '(CAP_PROP_WB_TEMPERATURE). DSHOW cameras typically '
@@ -271,7 +273,8 @@ def main() -> None:
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     # Try to disable auto exposure; some cameras will then run at a fixed frame rate.
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
-    cap.set(cv2.CAP_PROP_EXPOSURE, args.exposure if args.exposure is not None else -6)
+    if args.exposure is not None:
+        cap.set(cv2.CAP_PROP_EXPOSURE, args.exposure)
     # T11: manual white balance. DSHOW wrist cameras lock WB_TEMPERATURE
     # (~4600K default) which mismatches the cool-white endoscope LED, causing a
     # blue cast; setting the temperature to the scene illuminant fixes it.
@@ -293,8 +296,10 @@ def main() -> None:
         cap.set(cv2.CAP_PROP_CONTRAST, args.contrast)
     if args.saturation is not None:
         cap.set(cv2.CAP_PROP_SATURATION, args.saturation)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+    if args.width is not None:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
+    if args.height is not None:
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
     # CAP_PROP_FPS and target_fps are independent: fps selects the driver's
     # streaming mode (some devices default to a slow mode, e.g. 25 fps, when
     # unset), target_fps decimates that stream to an exact output rate.
@@ -341,22 +346,21 @@ def main() -> None:
     ])
     meta_lock = threading.Lock()
 
-    # T12-P1-1: capture_loop returns bool health; run() is wrapped so main()
-    # can detect a mid-session camera death and exit non-zero.
+    # T12-P1-1: capture_loop returns bool health; run it inside a wrapper used
+    # directly as the thread target so main() can detect a mid-session camera
+    # death and exit non-zero.
     capture_result: dict[str, bool] = {'ok': True}
-    capture_thread = threading.Thread(
-        target=capture_loop,
-        args=(cap, frame_queue, stop_event, ready_path, args.clock_offset_ns,
-              args.warmup_s, args.target_fps),
-        name='worker-capture',
-        daemon=True,
-    )
 
     def _run_with_result():
         capture_result['ok'] = capture_loop(
             cap, frame_queue, stop_event, ready_path, args.clock_offset_ns,
             args.warmup_s, args.target_fps)
-    capture_thread.run = _run_with_result
+
+    capture_thread = threading.Thread(
+        target=_run_with_result,
+        name='worker-capture',
+        daemon=True,
+    )
     num_writers = max(1, args.writer_threads)
     writer_threads = [
         threading.Thread(

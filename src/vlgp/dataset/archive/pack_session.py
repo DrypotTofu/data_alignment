@@ -1,4 +1,8 @@
-"""Pack a raw recording session into a SurgSync-style release.
+"""ARCHIVED 2026-08-30 (CODE_REVIEW_20260830 H9): no active consumers — the
+release-format role is superseded by the T17 LeRobotDataset v3 exporter
+(``vlgp.dataset.export_lerobot``).
+
+Pack a raw recording session into a SurgSync-style release.
 
 Layout produced under <out>/<session_name>/:
 

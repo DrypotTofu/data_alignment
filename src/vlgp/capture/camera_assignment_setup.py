@@ -5,9 +5,9 @@ resolutions/formats, and lets you choose which camera and recording parameters
 each arm should use.
 
 Usage:
-    python tools/camera_assignment_setup.py
-    python tools/camera_assignment_setup.py --config config/default.yaml
-    python tools/camera_assignment_setup.py --indices 0 1 2 3
+    python -m vlgp.capture.camera_assignment_setup
+    python -m vlgp.capture.camera_assignment_setup --config config/default.yaml
+    python -m vlgp.capture.camera_assignment_setup --indices 0 1 2 3
 """
 from __future__ import annotations
 
@@ -55,12 +55,6 @@ class ResolutionProfile:
         self.fourcc = fourcc
         self.real_fps = real_fps
         self.frame_read = frame_read
-
-    def __repr__(self) -> str:
-        return (
-            f'ResolutionProfile({self.requested_wh} -> {self.actual_wh} '
-            f'{self.fourcc} @ {self.real_fps:.2f} fps)'
-        )
 
 
 class CameraInfo:
@@ -190,15 +184,6 @@ class CameraInfo:
 
     def list_working_profiles(self) -> list[ResolutionProfile]:
         return [p for p in self.profiles if p.frame_read and p.real_fps > 0]
-
-    def best_profile_for_target(self, width: int, height: int, fourcc: str | None = None) -> ResolutionProfile | None:
-        candidates = self.list_working_profiles()
-        if fourcc is not None:
-            candidates = [p for p in candidates if p.fourcc == fourcc]
-        for p in candidates:
-            if p.actual_wh == (width, height):
-                return p
-        return None
 
 
 def probe_cameras(indices: list[int], backend_name: str, out_dir: Path,
@@ -437,7 +422,7 @@ def update_config(config_path: Path, arm_params: dict[int, dict]):
 def main():
     parser = argparse.ArgumentParser(description='Interactive camera-to-arm assignment')
     parser.add_argument('--config', type=str,
-                        default=str(Path(__file__).parents[1] / 'config' / 'default.yaml'),
+                        default=str(Path(__file__).parents[3] / 'scripts' / 'config' / 'default.yaml'),
                         help='Path to YAML config to update')
     parser.add_argument('--indices', type=int, nargs='+', default=list(range(10)),
                         help='Camera indices to probe (default: 0-9)')

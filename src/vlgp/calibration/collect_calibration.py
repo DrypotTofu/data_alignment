@@ -11,15 +11,14 @@ Flow (per camera, one at a time):
        ``<calib_dir>/<camera>/intrinsics.yaml`` + ``calibration.json``.
 
 Usage:
-    python scripts/tools/collect_calibration.py --board 9x6 --square-mm 22.5
-    python scripts/tools/collect_calibration.py --cameras arm_2,arm_1 \
+    python -m vlgp.calibration.collect_calibration --board 9x6 --square-mm 22.5
+    python -m vlgp.calibration.collect_calibration --cameras arm_2,arm_1 \
         --no-calibrate   # capture only, skip intrinsics
 """
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path

@@ -40,3 +40,14 @@ CALIB_RMS_ACCEPT_PX = 0.5
 
 # --- Review / annotations --------------------------------------------------
 ANNOTATIONS_SCHEMA_VERSION = 1
+
+# --- Camera schema (single source of truth) --------------------------------
+# CODE_REVIEW_20260830 H5/H6: these were duplicated (with drift risk) in
+# review_session, web/session_index, build_srth_dataset and export_lerobot.
+CAMERA_ORDER = ('camera_arm_2', 'camera_arm_1', 'camera_arm_3')
+CAMERA_STREAMS = {'camera_arm_2': 'endoscope', 'camera_arm_1': 'wrist_left',
+                  'camera_arm_3': 'wrist_right'}
+# filename column per camera in the alignment CSV
+FILENAME_COLS = {'camera_arm_2': 'anchor_filename',
+                 'camera_arm_1': 'camera_arm_1_filename',
+                 'camera_arm_3': 'camera_arm_3_filename'}

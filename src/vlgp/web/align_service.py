@@ -38,6 +38,9 @@ STAGE_LABELS = {
     'done': '对齐完成',
 }
 
+# Module-level job registry (single-process deployment, see 三.8 in
+# CODE_REVIEW_20260830): grows per session, never evicted — fine for the
+# shipped one-server setup.
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 

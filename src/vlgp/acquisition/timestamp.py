@@ -26,9 +26,6 @@ class ClockConfig:
     source: TimestampSource = TimestampSource.HOST_REALTIME
     # Offset to add to host time_ns to align with master clock ( TwinCAT ).
     offset_ns: int = 0
-    # Optional TwinCAT epoch. If TwinCAT provides FILETIME-like values they
-    # can be mapped to ns since Unix epoch using this offset.
-    twincat_epoch_offset_ns: int | None = None
 
 
 class UnifiedTimestamp:
@@ -45,10 +42,6 @@ class UnifiedTimestamp:
         """Return current timestamp in nanoseconds."""
         return get_timestamp_ns(self.config)
 
-    def convert_host_to_master(self, host_ns: int) -> int:
-        """Convert a host timestamp to the master clock domain."""
-        return host_ns + self.config.offset_ns
-
 
 def get_timestamp_ns(config: ClockConfig | None = None) -> int:
     """Return a unified timestamp in nanoseconds.
@@ -63,13 +56,6 @@ def get_timestamp_ns(config: ClockConfig | None = None) -> int:
     if cfg.source == TimestampSource.MANUAL_OFFSET:
         return time.time_ns() + cfg.offset_ns
     return time.time_ns()
-
-
-def ns_to_filetime(ns: int) -> int:
-    """Convert Unix-epoch nanoseconds to Windows FILETIME (100-ns ticks)."""
-    # FILETIME epoch is 1601-01-01 UTC. Unix epoch is 1970-01-01 UTC.
-    # Difference = 11644473600 seconds = 116444736000000000 * 100-ns ticks.
-    return (ns // 100) + 116444736000000000
 
 
 def filetime_to_ns(ft: int) -> int:

@@ -151,6 +151,9 @@ class PreloadRegistry:
                 'segment': j['segment'], 'segments': j['segments']}
 
     def _run(self, frames: FrameService, session: str, total: int, j: dict) -> None:
+        # NOTE (三.9): a fresh 12-worker pool per preload job — concurrent
+        # preloads of several sessions would stack pools. Acceptable for the
+        # single-user web platform; revisit if multi-session preload lands.
         pool = ThreadPoolExecutor(max_workers=PRELOAD_WORKERS)
         try:
             # Precompute per-cam filenames ONCE: df.iloc[row] is ~220 us/row,

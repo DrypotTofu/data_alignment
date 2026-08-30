@@ -20,8 +20,8 @@ Keys:
     Space     play/pause
 
 Usage:
-    python scripts/tools/review_session.py --session sessions/20260817_124143
-    python scripts/tools/review_session.py --sessions sessions/
+    python -m vlgp.review.review_session --session sessions/20260817_124143
+    python -m vlgp.review.review_session --sessions sessions/
 """
 from __future__ import annotations
 
@@ -45,17 +45,15 @@ from PyQt5.QtWidgets import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-ALIGN_REL = Path('camera_anchor_alignment/camera_anchor_alignment.csv')
-CAMERA_ORDER = ('camera_arm_2', 'camera_arm_1', 'camera_arm_3')
-STREAM_NAMES = {'camera_arm_2': 'endoscope', 'camera_arm_1': 'wrist_left',
-                'camera_arm_3': 'wrist_right'}
-# filename column per camera in the alignment CSV
-FILENAME_COLS = {'camera_arm_2': 'anchor_filename',
-                 'camera_arm_1': 'camera_arm_1_filename',
-                 'camera_arm_3': 'camera_arm_3_filename'}
+from vlgp.acquisition import session_layout as sl
+from vlgp.constants import CAMERA_ORDER, FILENAME_COLS
+
 STATUS_KEYS = {ord('1'): 'approved', ord('2'): 'rejected', ord('3'): 'pending'}
 
 PREFETCH_RADIUS = 90  # frames decoded ahead/behind in the background thread
+# Fallback-table camera merge tolerance (ns) for sessions without alignment:
+# ~50 ms nearest-frame matching on the PC timestamp axis.
+MERGE_TOLERANCE_NS = 50_000_000
 
 
 class FramePrefetcher(QThread):
@@ -119,7 +117,7 @@ class ReviewWindow(QMainWindow):
         self.batch_mode = batch_mode
         self.manifest_path = manifest_path
 
-        align_path = session_dir / ALIGN_REL
+        align_path = sl.alignment_path(session_dir)
         if align_path.exists():
             self.align = pd.read_csv(align_path)
             self.align = self.align.sort_values('anchor_timestamp_ns_plc').reset_index(drop=True)
@@ -188,7 +186,7 @@ class ReviewWindow(QMainWindow):
             table = pd.merge_asof(
                 table, right,
                 left_on='anchor_timestamp_ns_plc', right_on='timestamp_ns',
-                direction='nearest', tolerance=50_000_000,  # 50 ms
+                direction='nearest', tolerance=MERGE_TOLERANCE_NS,
             ).drop(columns=['timestamp_ns'])
         for cam in CAMERA_ORDER:
             if FILENAME_COLS[cam] not in table.columns:
@@ -344,6 +342,7 @@ class ReviewWindow(QMainWindow):
         self.lbl_row.setText(f'row {row} / {self.n_rows - 1}')
         self.prefetcher.want(row)
         self._render(row)
+        self._redraw_curve()   # keep the motion-curve marker in sync (single timer)
 
     def _on_prefetch_ready(self, row: int) -> None:
         if row == self.row:
@@ -500,7 +499,7 @@ def collect_sessions(root: Path) -> list[Path]:
     out = []
     if root.exists():
         for d in sorted(root.iterdir()):
-            if d.is_dir() and (d / ALIGN_REL).exists():
+            if d.is_dir() and sl.alignment_path(d).exists():
                 out.append(d)
     return out
 
@@ -558,12 +557,10 @@ def main() -> int:
     else:
         parser.error('Provide --session or --sessions')
 
-    # playback ticker
-    from PyQt5.QtCore import QTimer
-    t = QTimer()
-    t.timeout.connect(lambda: (w._tick(), w._redraw_curve()))
-    t.start(30)
-    app._review_timer = t
+    # NOTE: no second playback timer here — ReviewWindow owns the single
+    # play_timer (33 ms -> _tick); the curve marker is redrawn inside
+    # show_frame. A second timer (as once existed) drove _tick twice and
+    # played back at ~2x speed.
     return app.exec_()
 
 

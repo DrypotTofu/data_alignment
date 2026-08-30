@@ -159,9 +159,11 @@ class TaskHierarchy:
                 inst = seg.get('instruction')
                 if not isinstance(inst, str) or not inst.strip():
                     problems.append(f'{tag}: instruction missing/empty')
-                elif self.instructions_for(path) and inst not in self.instructions_for(path):
-                    problems.append(
-                        f'{tag}: instruction {inst!r} not in template set of {path!r}')
+                else:
+                    templates = self.instructions_for(path)
+                    if templates and inst not in templates:
+                        problems.append(
+                            f'{tag}: instruction {inst!r} not in template set of {path!r}')
             if 'corrective' in seg and not isinstance(seg['corrective'], bool):
                 problems.append(f'{tag}: corrective must be a bool')
         return problems
@@ -208,7 +210,6 @@ def validate_structure(data: dict) -> list[str]:
         return errors
 
     seen: set[str] = set()
-    leaf_ok = True
     for task in hier:
         if not isinstance(task, dict) or 'id' not in task:
             errors.append('hierarchy: every task needs an "id"')
@@ -234,12 +235,8 @@ def validate_structure(data: dict) -> list[str]:
             if not isinstance(inst, list) or not inst:
                 errors.append(f'{tid}/{sid}: instructions missing or empty '
                               f'(leaf nodes must offer templates)')
-                leaf_ok = False
             elif any(not isinstance(x, str) or not x.strip() for x in inst):
                 errors.append(f'{tid}/{sid}: instructions must be non-empty strings')
-                leaf_ok = False
-        if not subs and not leaf_ok:
-            pass  # task-level leaf without subtasks already reported via its own check
         if not subs:
             inst = task.get('instructions', [])
             if not isinstance(inst, list) or not inst:
