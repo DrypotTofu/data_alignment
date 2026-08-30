@@ -458,6 +458,13 @@ def main() -> int:
                     'camera_arm_1': 'camera_arm_1_filename',
                     'camera_arm_3': 'camera_arm_3_filename'}
     kept_files = {}
+    # NOTE (CODE_REVIEW_20260830 2.3 "孤儿末帧"): kept_files mirrors the
+    # ALIGNMENT GRID (len(grid) frames — the source of truth for which frame
+    # sits at each grid row), while actions.parquet covers grid TRANSITIONS
+    # (len(grid)-1 rows, delta actions). So obs/ + manifest carry one more
+    # frame than actions rows reference (the final grid row's frame). This is
+    # intentional — the last frame remains available for boundary inspection —
+    # and exporters (export_lerobot) read only actions rows, so it is harmless.
     for cam, stream in stream_map.items():
         col = filename_col[cam]
         if col not in grid.columns:

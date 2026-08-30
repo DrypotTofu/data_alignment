@@ -1,12 +1,15 @@
 # Example VLGP acquisition session configuration using the current framework.
-# Camera indices below match the current rig: arm_1=2, arm_2=0, arm_3=3.
+# Camera indices below match the current rig (confirmed T3/T4, 2026-08-17/18):
+# arm_1=1, arm_2=0, arm_3=3 — same as scripts/config/default.yaml. NOTE this
+# file is the DEFAULT --config of run_acquisition.py, so it must stay in sync
+# with the physical wiring.
 
 base_dir: ./sessions
 session_name: null  # null -> auto-generate from current UTC time
 clock_source: host_realtime
 clock_offset_ns: 0
 camera_bindings:
-  arm_1: 2
+  arm_1: 1
   arm_2: 0
   arm_3: 3
 
