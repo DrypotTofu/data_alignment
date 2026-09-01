@@ -3,10 +3,10 @@
 Chains the standard per-session processing steps (README「采集后的数据处理流程」):
 
     (optional) write_session_meta -> verify_alignment -> align_camera_anchor
-    -> review_session (GUI, interactive) -> build_srth_dataset -> images_to_video x3
+    -> web review (manual, in browser) -> build_srth_dataset -> images_to_video x3
 
 Each step runs as a subprocess; a non-zero exit code aborts the pipeline.
-After the review GUI closes, annotations.json is inspected: sessions marked
+After the web review is saved, annotations.json is inspected: sessions marked
 "rejected" stop here (nothing to build); anything else proceeds.
 
 Usage:
@@ -29,7 +29,6 @@ STEP_MODULES = {
     'write_session_meta': 'vlgp.review.write_session_meta',
     'verify_alignment': 'vlgp.alignment.verify_alignment',
     'align_camera_anchor': 'vlgp.alignment.align_camera_anchor',
-    'review_session': 'vlgp.review.review_session',
     'build_srth_dataset': 'vlgp.dataset.build_srth_dataset',
     'images_to_video': 'vlgp.dataset.images_to_video',
 }
@@ -78,7 +77,7 @@ def main() -> int:
                         help='Run write_session_meta.py first (interactive; do this '
                              'right after capture, task info cannot be recovered later)')
     parser.add_argument('--skip-review', action='store_true',
-                        help='Skip the interactive review/trim GUI')
+                        help='Skip the interactive web review step (annotations.json must already exist)')
     parser.add_argument('--skip-video', action='store_true',
                         help='Skip preview video generation')
     args = parser.parse_args()
@@ -97,8 +96,7 @@ def main() -> int:
     steps.append(('build 30 Hz alignment table', STEP_MODULES['align_camera_anchor'],
                   ['--session', str(session_dir)]))
     if not args.skip_review:
-        steps.append(('human review / trim (GUI closes to continue)',
-                      STEP_MODULES['review_session'], ['--session', str(session_dir)]))
+        steps.append(('human review / trim (Web platform)', '', []))
     steps.append(('build SRT-H episode', STEP_MODULES['build_srth_dataset'],
                   ['--session', str(session_dir)]))
     if not args.skip_video:
@@ -111,7 +109,23 @@ def main() -> int:
 
     total = len(steps)
     for i, (label, module, cmd) in enumerate(steps, 1):
-        run_step(f'{i}/{total} {label}', module, cmd)
+        if not module:
+            # Manual step: web review. The pipeline pauses for the user to
+            # open the web platform in a browser, review/trim the session, save
+            # annotations.json, then press Enter here to continue.
+            print(f'\n===== {i}/{total} {label} =====')
+            print(f'  Session: {session_dir}')
+            print('  1. Start the web platform: python -m vlgp.web.app (or scripts/tools/start_web_platform.bat)')
+            print('  2. Open http://127.0.0.1:8765 and review this session.')
+            print('  3. Save annotations.json in the web UI.')
+            print('  4. Return here and press Enter to continue the pipeline.')
+            try:
+                input('  Press Enter when done (Ctrl-C to abort)...')
+            except KeyboardInterrupt:
+                print('\n[ABORT] Pipeline interrupted by user.')
+                return 1
+        else:
+            run_step(f'{i}/{total} {label}', module, cmd)
         if label.startswith('human review'):
             status = review_outcome(session_dir)
             print(f'Review outcome: {status}')

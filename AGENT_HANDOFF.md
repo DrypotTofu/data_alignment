@@ -116,15 +116,22 @@
 
 ### T10-评审. 数据清洗/裁剪 GUI — 实机完整评审（实现已完成 ✅，待桌面操作）
 
+> **2026-09-01 PM 更新：T10-评审关闭，PyQt5 `review_session.py` 退役。** Web 平台（T15 v0）已通过完整评审体验确认优于 PyQt5，且 37/37 回归通过；`scripts/tools/review_session.bat` 与 `src/vlgp/review/review_session.py` 已删除；后续所有评审/裁剪/标注统一走 Web 平台（`python -m vlgp.web.app`）。
+
 **实现已完成（2026-08-18，commit 8bef0a3 / d54eea7）**：
 - `scripts/tools/review_session.py`（PyQt5 单文件）：三路同步视图 + 运动量曲线点击跳转 + IN/OUT 裁剪 + approved/rejected 状态 + 批量队列模式，已实现。
 - 非破坏式：人工决策只写 `<session>/annotations.json`（schema 见设计文档 2.1 节），原始数据不动。
 - `build_srth_dataset.py` 已集成：自动检测 annotations.json，按 trim 过滤网格行、跳过 rejected session、trim 信息记入 episode `meta.json`。
 - 逻辑验收已通过（trim [3000,15000] → 15116→10160 行、episode 10100 样本；rejected 跳过正常；GUI 冒烟通过）。
 
-**剩余（需桌面操作）**：在 `sessions/20260817_124143` 上完整评审一遍（打 IN/OUT → 保存 → 重进状态恢复 → 4x 快放流畅），汇报工具截图/录屏说明、验收结果、annotations.json 实例。
+**历史**：2026-08-18 PyQt5 单文件实现，2026-08-26 Web 平台（T15 v0）功能对齐并通过 37/37 回归，2026-09-01 删除 PyQt5 版本并统一为 Web 平台。
 
-> 用法：`python -m vlgp.review.review_session --session sessions/20260817_124143`（支持任意 cwd，`--sessions sessions/` 批量模式）。
+**当前用法**：
+```powershell
+python -m vlgp.web.app --host 127.0.0.1 --port 8765
+```
+然后在浏览器打开 `http://127.0.0.1:8765`，进行裁剪、状态标记与片段标注；`annotations.json` 与 PyQt5 版逐字节一致，数据集构建流程无回归。
+
 
 ### T11. 腕部相机成像质量修复 ✅（2026-08-18 完成，详见归档）
 

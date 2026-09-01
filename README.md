@@ -50,7 +50,7 @@ python -m vlgp.review.process_session --session sessions/<session_name> [--meta]
 | `write_session_meta.bat` | `vlgp.review.write_session_meta` | 当场补录任务元数据（不可回溯，先做） |
 | `verify_alignment.bat` | `vlgp.alignment.verify_alignment` | 对齐预检（漂移/同步质量） |
 | `align_camera_anchor.bat` | `vlgp.alignment.align_camera_anchor` | 生成 30 Hz 相机锚点对齐表 |
-| `review_session.bat` | `vlgp.review.review_session` | 人工裁剪/审核 GUI（IN/OUT + 状态） |
+| `start_web_platform.bat` | `vlgp.web.app` | 启动 Web 评审平台（裁剪/标注/状态） |
 | `build_srth_dataset.bat` | `vlgp.dataset.build_srth_dataset` | 构建 SRT-H 训练 episode |
 | `images_to_video.bat` | `vlgp.dataset.images_to_video` | 目检视频生成 |
 | `analyze_session.bat` | `vlgp.analysis.analyze_session` | Session 综合分析（fps/RTT/漂移） |
@@ -76,16 +76,25 @@ python -m vlgp.alignment.verify_alignment --session sessions/<session_name>
 # 3. 生成 30 Hz 相机锚点对齐表（关注对齐误差 p99 < 15 ms、覆盖率）
 python -m vlgp.alignment.align_camera_anchor --session sessions/<session_name>
 
-# 4. 人工裁剪与审核（GUI：运动量曲线定位首尾静止段，[/] 打 IN/OUT，
-#    1/2/3 标 approved/rejected/pending，S 保存；决策写入 annotations.json，
-#    原始数据不动。无对齐表的废品 session 会进入降级视图，只能标 rejected/pending）
-python -m vlgp.review.review_session --session sessions/<session_name>
+ # 4. 人工裁剪与审核（Web 平台：运动量曲线定位首尾静止段，打 IN/OUT，
+ #    标 approved/rejected/pending，保存；决策写入 annotations.json，
+ #    原始数据不动。无对齐表的废品 session 会进入降级视图，只能标 rejected/pending）
+ python -m vlgp.web.app --host 127.0.0.1 --port 8765
+```
 
-# 5. 构建 SRT-H 训练 episode（自动应用 trim、带入 session 元数据；
-#    核对样本数与动作数值范围）
+然后在浏览器打开 `http://127.0.0.1:8765`，选择 session 进行 IN/OUT 裁剪、approved/rejected/pending 标记与片段标注，保存后 `annotations.json` 即写入 session 目录。
+
+python -m vlgp.review.process_session --session sessions/<session_name> --skip-review
+
+ # 5. 一键管线（或在 Web 评审后运行；会校验 annotations.json 状态，
+ #    rejected 的 session 会停止）
+ python -m vlgp.review.process_session --session sessions/<session_name> --skip-review
+
+ # 6. 构建 SRT-H 训练 episode（自动应用 trim、带入 session 元数据；
+ #    核对样本数与动作数值范围）
 python -m vlgp.dataset.build_srth_dataset --session sessions/<session_name>
 
-# 6. 目检视频（逐路检查画面连续性、色彩、时间戳叠加）
+ # 7. 目检视频（逐路检查画面连续性、色彩、时间戳叠加）
 python -m vlgp.dataset.images_to_video --dir sessions/<session_name>/camera_arm_2 \
     --output sessions/<session_name>/arm2_preview.mp4 --timestamp-overlay
 ```
@@ -100,7 +109,7 @@ python -m vlgp.dataset.images_to_video --dir sessions/<session_name>/camera_arm_
 │   │   └── process_workers/      # 相机子进程 worker
 │   ├── alignment/                # align_camera_anchor / verify_alignment（calibrate_temporal_drift 已归档）
 │   ├── dataset/                  # build_srth_dataset / images_to_video / export_lerobot（pack_session 已归档）
-│   ├── review/                   # review_session / process_session / write_session_meta
+│   ├── review/                   # process_session / write_session_meta / common
 │   ├── calibration/              # collect_calibration / camera_param_tuner
 │   ├── analysis/                 # analyze_session / analyze_gripper
 │   ├── capture/                  # manual_acquisition / camera_assignment_* / preview_*

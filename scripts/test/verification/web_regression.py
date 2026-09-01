@@ -82,7 +82,7 @@ def expected_pyqt_annotations(saved: dict, status: str, trim: dict,
                               segments: list, notes: str) -> bytes:
     """Replicate the PyQt5 writer (review_session.save_annotations +
     Path.write_text) byte-for-byte."""
-    from vlgp.review.review_session import os_user as qt_user
+    from vlgp.review.common import os_user as qt_user
     pyqt = {
         'version': 1,
         'reviewed_by': qt_user(),
