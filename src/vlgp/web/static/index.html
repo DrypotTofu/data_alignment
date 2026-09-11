@@ -9,6 +9,13 @@
   <div id="app">
     <aside id="sidebar">
       <h2>会话</h2>
+      <div id="root-bar">
+        <div class="root-line">
+          <span id="root-current" title="">未读取数据目录…</span>
+          <button id="btn-root" title="切换数据目录（其他磁盘 / 外置盘）">数据目录</button>
+        </div>
+        <div id="root-disk" class="sub"></div>
+      </div>
       <ul id="session-list"></ul>
     </aside>
     <main id="main">
@@ -110,6 +117,60 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <div id="root-dialog" hidden>
+    <div class="dialog-box">
+      <div class="dialog-head">
+        <span>选择数据目录</span>
+        <button id="root-close" class="dialog-x" title="关闭 (Esc)">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="dialog-row">
+          <input id="root-path-input" spellcheck="false"
+                 placeholder="例如 D:\vlgp_sessions 或 E:\data\sessions">
+          <button id="root-go">前往</button>
+          <button id="root-up" title="上一级">上级</button>
+        </div>
+        <div class="chip-block">
+          <span class="chip-label">磁盘</span>
+          <div id="root-drives" class="chips"></div>
+        </div>
+        <div class="chip-block">
+          <span class="chip-label">最近</span>
+          <div id="root-recent" class="chips"></div>
+        </div>
+        <div id="root-browse-stat" class="browse-stat"></div>
+        <ul id="root-entries" class="entries"></ul>
+        <div class="acq-block">
+          <div class="acq-head">采集输出目录（新会话写入位置）</div>
+          <div class="dialog-row">
+            <input id="acq-dir-input" spellcheck="false"
+                   placeholder="例如 E:\vlgp_sessions">
+            <button id="acq-use-root" title="与当前浏览的目录一致">同数据目录</button>
+            <button id="acq-save">保存</button>
+          </div>
+          <div id="acq-hint" class="sub"></div>
+        </div>
+        <div class="acq-block">
+          <div class="acq-head">预览缓存（每个 10 分钟 3 机位会话约 0.9 GB）</div>
+          <div class="dialog-row">
+            <span id="cache-stat" class="sub">尚未扫描</span>
+            <button id="cache-scan">扫描</button>
+            <button id="cache-clean" disabled>删除失效缓存</button>
+          </div>
+          <div id="cache-hint" class="sub"></div>
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <span id="root-dialog-msg" class="dialog-msg"></span>
+        <button id="root-reveal" title="用系统资源管理器打开当前目录">打开资源管理器</button>
+        <label class="chk" title="同时把采集输出目录改成这个目录">
+          <input type="checkbox" id="root-sync-acq"> 同步采集输出目录
+        </label>
+        <button id="root-use" class="primary">使用此目录</button>
+      </div>
+    </div>
   </div>
   <script src="app.js"></script>
 </body>

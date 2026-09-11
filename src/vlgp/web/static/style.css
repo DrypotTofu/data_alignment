@@ -95,3 +95,68 @@ button:disabled { opacity: .4; cursor: default; }
                    border: 1px solid #3a4250; border-radius: 4px;
                    padding: 4px 6px; font-size: 13px; }
 .meta-actions { margin-top: 8px; display: flex; gap: 8px; }
+
+/* ---------------------------------------------------- data-root picker */
+#root-bar { background: #1d2126; border: 1px solid #2f353d; border-radius: 6px;
+            padding: 6px 8px; margin-bottom: 8px; }
+.root-line { display: flex; align-items: center; gap: 6px; }
+#root-current { flex: 1; font-size: 12px; color: #cfe0f5; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; direction: rtl;
+                text-align: left; }
+#btn-root { padding: 2px 8px; font-size: 12px; }
+#root-bar .sub { font-size: 11px; color: #7d8794; margin-top: 3px; }
+#root-bar .sub.warn { color: #e0a13c; }
+#root-dialog { position: fixed; inset: 0; background: rgba(0, 0, 0, .55);
+               display: flex; align-items: center; justify-content: center;
+               z-index: 50; }
+#root-dialog[hidden] { display: none; }
+.dialog-box { width: min(760px, 94vw); max-height: 88vh; display: flex;
+              flex-direction: column; background: #23272d; border-radius: 8px;
+              border: 1px solid #3a4250; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+.dialog-head { display: flex; align-items: center; padding: 10px 12px;
+               border-bottom: 1px solid #2f353d; font-size: 14px;
+               font-weight: 600; color: #cfe0f5; }
+.dialog-x { margin-left: auto; padding: 0 8px; font-size: 16px; line-height: 1.2; }
+.dialog-body { padding: 10px 12px; overflow: auto; }
+.dialog-row { display: flex; gap: 8px; align-items: center; }
+.dialog-row input { flex: 1; background: #2b3038; color: #d7dae0;
+                    border: 1px solid #3a4250; border-radius: 4px;
+                    padding: 5px 8px; font-size: 13px;
+                    font-family: Consolas, monospace; }
+.chip-block { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.chip-label { font-size: 12px; color: #8fa3bf; min-width: 30px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { padding: 3px 10px; font-size: 12px; border-radius: 12px;
+        border: 1px solid #3a4250; background: #2b3038; cursor: pointer;
+        color: #b9c2cf; }
+.chip:hover { background: #36404b; }
+.chip .free { color: #7d8794; font-size: 11px; margin-left: 4px; }
+.chip.low .free { color: #e0a13c; }
+.browse-stat { margin: 8px 0 4px; font-size: 12px; color: #8fa3bf;
+               font-family: Consolas, monospace; word-break: break-all; }
+.entries { list-style: none; margin: 0; padding: 0; max-height: 34vh;
+           overflow: auto; border: 1px solid #2f353d; border-radius: 6px; }
+.entries li { display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+              font-size: 13px; cursor: pointer; border-bottom: 1px solid #262b31; }
+.entries li:last-child { border-bottom: none; }
+.entries li:hover { background: #2f353d; }
+.entries li.sel { background: #2c5f8a; color: #fff; }
+.entries .ename { flex: 1; overflow: hidden; text-overflow: ellipsis;
+                  white-space: nowrap; }
+.entries .emark { font-size: 11px; color: #7ec87e; }
+.entries li.sel .emark { color: #d6ecff; }
+.entries .pick { padding: 1px 8px; font-size: 11px; }
+.entries .empty { color: #7d8794; cursor: default; }
+.acq-block { margin-top: 10px; border-top: 1px solid #2f353d; padding-top: 8px; }
+.acq-head { font-size: 12px; color: #8fa3bf; margin-bottom: 5px; }
+.acq-block .sub { font-size: 11px; color: #7d8794; margin-top: 4px;
+                  word-break: break-all; }
+.dialog-foot { display: flex; gap: 10px; align-items: center; padding: 10px 12px;
+               border-top: 1px solid #2f353d; }
+.dialog-msg { flex: 1; font-size: 12px; color: #e0a13c; }
+.dialog-msg.err { color: #e07070; }
+.dialog-msg.ok { color: #7ec87e; }
+.chk { font-size: 12px; color: #a8b4c2; display: flex; align-items: center;
+       gap: 4px; cursor: pointer; }
+button.primary { background: #2c5f8a; border-color: #3a76b0; color: #fff; }
+button.primary:hover:not(:disabled) { background: #356ea0; }

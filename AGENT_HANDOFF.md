@@ -4,6 +4,7 @@
 > 2026-08-23 PM 更新：① T15 定稿 Web 架构（FastAPI + JS 前端），v0 先迁移 T10 裁剪功能进 Web 平台（迁移完成前 PyQt5 版继续可用）；② PM 决策：`delta_rot_6d` 改为 SRT 局部系约定（见 T16 决策注记）。
 > 2026-08-26 PM 更新：图像工程师答复——内窥镜畸变由主机内置矫正（出厂标定存镜头 EEPROM），T7-现场标定范围收缩为腕部双相机；内窥镜双目两路输出可行性待现场确认。
 > 2026-08-26 PM 更新 2：数据集格式决策——采用 **LeRobotDataset v3.0** 规范，新增 T17（格式对齐与导出器）；内窥镜双目两路可同时输出已确认（见 T7-现场）。
+> 2026-09-11 更新（执行 Agent）：Web 平台新增 **IN/OUT 视频导出**（未标注时 409 警告 + 确认后导出全片；逐相机精确映射，实测修复 OUT 帧丢失与缺相机中断）与**数据目录选择**（任意文件夹/外置盘，缓存与日志随根，可改采集输出目录，后台任务运行时拒绝切换；旧失效缓存 6.79 GB 可一键清理）。顺带修复单相机会话整段预加载静默失效、缺相机列 500→404。回归：仓库根 43/43（2 SKIP）、合成三相机夹具根 42/42（0 SKIP）；详见 `tech_repo/VLGP_Web数据目录与导出_20260911.md`。
 > 角色分工：项目管理 Agent 负责规划与验收；本文档面向执行 Agent，覆盖具体操作、测试与汇报要求。
 > 阶段性目标（里程碑）：**达到「可以开始正式采集用于标注和模型训练的数据」的状态**。
 
@@ -207,6 +208,8 @@ python -m vlgp.web.app --host 127.0.0.1 --port 8765
 - **Web 平台自动对齐生成（2026-08-26→08-27 迭代，用户需求）**：选中**未生成对齐表**的 session 时自动生成——`POST /api/sessions/{name}/align`（`vlgp/web/align_service.py`，复用 CLI 同款 `build_camera_anchor_alignment`，**与 CLI 产出逐字节一致**（实测 932 行））；**异步执行 + 进度**：POST 立即返回 `started`（后台线程），前端轮询 `GET /api/sessions/{name}/align/status` 显示**进度条**（阶段 加载机器人数据/拟合漂移模型/加载相机元数据/预计算插值数据/生成 30Hz 锚点网格 + 当前/总数百分比；`build_camera_anchor_alignment` 新增可选 `progress_cb`，CLI 行为不变）；幂等（已对齐返回 `already_aligned`）；无机器人数据同步返回 422（中文提示「PLC/ADS 链路可能未就绪」）；列表「未对齐」徽标。
 - **机器人状态面板（2026-08-27，用户需求）**：新增 `GET /api/sessions/{name}/row/{row}`（当前对齐行的**四臂**姿态快照：位置/镜系位置（arm2=内窥镜=原点）/四元数 wxyz/夹爪角度/本步位移/器械名称（复用 `INSTRUMENT_NAME`）/能量状态，NaN 行→null）；前端新增**四臂切换 Tab**（arm1..arm4）+ 状态面板（欧拉角由四元数前端换算 ZYX），行切换时防抖（150ms）拉取。修复：自动对齐 422 错误消息提取（`detail.error` 嵌套层级）；`build_camera_anchor_alignment` 进度改造曾误用 `enumerate(iterrows())` 导致 `frame_row` 变元组（测试即捕获），已恢复原解包。回归新增 H 节（align-status/行状态 4 臂+器械/越界 404），**43/43 PASS**。
 - **依赖注记（已解除）**：本机 Smart App Control 曾按信誉阻止 conda-forge 的 `pyexpat.pyd`（`应用程序控制策略已阻止此文件`）导致 env 内 pip 不可用；**用户已关闭 SAC（VerifiedAndReputablePolicyState=0）**，pyexpat/pip 恢复正常，fastapi/uvicorn 已用 pip 正式重装（`pip check` 通过）。
+- **Web 流水线集成（2026-08-30，用户需求）**：`src/vlgp/web/pipeline_service.py` 把既有 CLI 工具（verify_alignment / build_srth_dataset / images_to_video）作为**后台子进程**运行（日志写文件、无管道），端点 `POST /api/sessions/{name}/pipeline/{kind}` + `GET /api/pipeline/{job_id}/status|log`，前端流水线面板（四按钮 + 状态轮询 + 日志抽屉）；`GET/PUT /api/sessions/{name}/meta`（T8 表单）。**web_regression 51/51 PASS**。
+- **IN/OUT 视频导出 + 数据目录选择（2026-09-11，用户需求）**：① **导出按 IN/OUT 裁剪**——有 trim → 逐相机 `--start-sec/--end-sec`（行 → 该相机 filename 列 → 该相机时间戳 → 相对首帧秒；缺列回退网格并在日志标注 `exact|grid`）；无 trim → **409 警告**，前端确认后 `?confirm=1` 导出全片。实测修复 **OUT 帧被丢**（float→ns 反算少 1 ns，[10,30] 只出 20 帧 → 外扩 1 µs 后 **21 帧**，与 `build_srth_dataset` 闭区间一致）与**缺 `metadata.csv` 相机中断整条序列**（改为跳过并记日志）。② **数据目录选择**（存储空间需求，决策 C+A+B）——侧栏「数据目录」弹窗（磁盘容量/逐级浏览/手输/资源管理器/最近），缓存与管线日志**跟随数据根**（`<根>/_web_preview`、`<根>/_web_logs`），可改**采集输出目录** `base_dir`（两份 yaml 行级改写），**有后台任务时拒绝切换（409）**；旧缓存 6.79 GB 失效数据可一键清理（统计 106.6s→0.81s）。顺带修单相机会话**整段预加载线程 KeyError 静默失效**、缺相机列 500→404、缓存原子写 + 魔数校验。新增合成 **3 相机测试夹具**；回归：仓库根 43/43（2 SKIP）、夹具根 42/42（0 SKIP）。详见 `tech_repo/VLGP_Web数据目录与导出_20260911.md`。
 - ~~建议在 T10-评审之后实施~~（2026-08-23 修订：T15 改为 Web 平台承载 T10 功能，不再依赖 PyQt5 版评审完成；T10-评审仍建议尽早做，其验收结论直接作为 v0 迁移的功能基线）。
 
 ### T16. 基于 MDH 的运动学验证与基座系→镜系变换解算（2026-08-21 模块实现；2026-08-21 delta_rot_6d 改造完成；FK/Kabsch 数据验证待单关节运动）

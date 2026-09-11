@@ -16,9 +16,15 @@ import pandas as pd
 
 from vlgp.acquisition import session_layout as sl
 from vlgp.constants import ARMS, CAMERA_ORDER, FILENAME_COLS
+from vlgp.web.settings import (
+    DEFAULT_ROOT,
+    LOG_DIRNAME,
+    PREVIEW_DIRNAME,
+    WebSettings,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SESSIONS_ROOT = REPO_ROOT / 'sessions'
+SESSIONS_ROOT = DEFAULT_ROOT
 
 DEFAULT_ANNOTATIONS = {
     'version': 1,
@@ -41,6 +47,11 @@ def _safe_name(name: str) -> str:
     return base
 
 
+def _is_hidden(name: str) -> bool:
+    """Our own data-root-side dirs (_web_preview/_web_logs) and dot folders."""
+    return name.startswith('_') or name.startswith('.')
+
+
 class SessionNotFound(FileNotFoundError):
     pass
 
@@ -50,11 +61,46 @@ class NoAlignment(FileNotFoundError):
 
 
 class SessionIndex:
-    """Per-process session discovery + cached alignment access."""
+    """Per-process session discovery + cached alignment access.
 
-    def __init__(self, sessions_root: Path | None = None):
+    The data root is mutable at runtime (``set_root``): the operator can point
+    the platform at any folder holding sessions, which is what makes browsing
+    an external/archive disk possible. Every cache keyed on the root is
+    dropped on a switch (callers must also clear the frame-JPEG LRU, see
+    ``vlgp.web.frame_service.reset_frame_cache``).
+    """
+
+    def __init__(self, sessions_root: Path | None = None,
+                 settings: WebSettings | None = None):
+        self.settings = settings
+        if sessions_root is None and settings is not None:
+            sessions_root = Path(settings.sessions_root)
         self.root = Path(sessions_root) if sessions_root else SESSIONS_ROOT
         self._align_cache: dict[str, tuple[float, pd.DataFrame]] = {}
+
+    # ------------------------------------------------------------------ root
+    def set_root(self, path: str | Path) -> Path:
+        """Point the index at another data folder (must exist / be a dir)."""
+        p = Path(path).expanduser()
+        try:
+            p = p.resolve()
+        except OSError as e:
+            raise ValueError(f'无法解析路径 {path!r}: {e}') from e
+        if not p.is_dir():
+            raise ValueError(f'目录不存在或不是文件夹: {p}')
+        self.root = p
+        self._align_cache.clear()
+        return p
+
+    @property
+    def preview_root(self) -> Path:
+        """JPEG preview cache for the ACTIVE root (``<root>/_web_preview``)."""
+        return self.root / PREVIEW_DIRNAME
+
+    @property
+    def log_root(self) -> Path:
+        """Pipeline job logs for the ACTIVE root (``<root>/_web_logs``)."""
+        return self.root / LOG_DIRNAME
 
     # ------------------------------------------------------------------ paths
     def session_dir(self, name: str) -> Path:
@@ -69,8 +115,8 @@ class SessionIndex:
         if not self.root.is_dir():
             return out
         for d in sorted(self.root.iterdir()):
-            if not d.is_dir():
-                continue
+            if not d.is_dir() or _is_hidden(d.name):
+                continue        # skip _web_preview / _web_logs / .dot dirs
             try:
                 info = self.session_info(d.name)
             except (NoAlignment, OSError):
@@ -111,9 +157,16 @@ class SessionIndex:
         if cam not in FILENAME_COLS:
             raise ValueError(f'unknown camera: {cam}')
         df = self.alignment(name)
+        col = FILENAME_COLS[cam]
+        if col not in df.columns:
+            # single-camera / legacy sessions only carry the columns of the
+            # cameras that were recorded — a 404, never a KeyError/500
+            raise FileNotFoundError(
+                f'{name}/{cam}: alignment table has no {col} column '
+                f'(session has no {cam} frames)')
         if not 0 <= row < len(df):
             raise IndexError(f'row {row} out of range [0, {len(df)})')
-        fname = df.iloc[row][FILENAME_COLS[cam]]
+        fname = df.iloc[row][col]
         if not isinstance(fname, str) or not fname:
             raise FileNotFoundError(f'{name}/{cam}: no frame at row {row}')
         if Path(fname).name != fname:

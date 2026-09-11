@@ -84,6 +84,8 @@ python -m vlgp.alignment.align_camera_anchor --session sessions/<session_name>
 
 然后在浏览器打开 `http://127.0.0.1:8765`，选择 session 进行 IN/OUT 裁剪、approved/rejected/pending 标记与片段标注，保存后 `annotations.json` 即写入 session 目录。
 
+会话数据不限于仓库 `sessions/`：侧栏**「数据目录」**按钮可把平台指向任意文件夹（其他磁盘/外置盘/NAS），选择会持久化到 `var/web_settings.json`；预览缓存与流水线日志跟随所选目录（`<数据根>/_web_preview`、`<数据根>/_web_logs`），同一弹窗里可查看/修改**采集输出目录**（两份采集 yaml 的 `base_dir`）并清理已删除会话的失效缓存。有后台任务（预加载/流水线）运行时不允许切换目录。
+
 python -m vlgp.review.process_session --session sessions/<session_name> --skip-review
 
  # 5. 一键管线（或在 Web 评审后运行；会校验 annotations.json 状态，

@@ -64,6 +64,10 @@ const state = {
   preloadPollTimer: null,     // server preload status poller
   pipelineJob: null,          // active pipeline job id (verify/build/video)
   pipelineTimer: null,        // pipeline status poller
+  settings: null,             // /api/settings payload (active data root)
+  browse: null,               // last /api/fs/list payload (picker state)
+  browseTarget: null,         // directory the picker would switch to
+  cache: null,                // last /api/settings/cache scan (cache cleanup)
 };
 
 const $ = (id) => document.getElementById(id);
@@ -102,9 +106,26 @@ async function api(path, opts) {
 }
 
 async function loadSessions() {
-  const { sessions } = await api('/api/sessions');
+  let sessions = [];
+  let data = {};
+  try {
+    data = await api('/api/sessions');
+    sessions = data.sessions || [];
+  } catch (e) {
+    $('session-list').innerHTML = '';
+    const li = document.createElement('li');
+    li.textContent = '读取会话失败: ' + e.message;
+    $('session-list').appendChild(li);
+    return;
+  }
   const ul = $('session-list');
   ul.innerHTML = '';
+  if (!sessions.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = '该数据目录下没有已对齐的会话';
+    ul.appendChild(li);
+  }
   for (const s of sessions) {
     const li = document.createElement('li');
     const ann = s.annotations || {};
@@ -123,6 +144,289 @@ async function loadSessions() {
     li.appendChild(sub);
     li.onclick = () => selectSession(s.name);
     ul.appendChild(li);
+  }
+}
+
+// ------------------------------------------------------- data root picker
+// The browser cannot open a folder dialog on the server, so the picker is
+// built from /api/fs/* (drives + directory listing + capacity) and the active
+// root is switched through PUT /api/settings/root (persisted server-side).
+function fmtGb(v) { return (v === null || v === undefined) ? '?' : `${v} GB`; }
+
+function renderRootBar() {
+  const s = state.settings;
+  const cur = $('root-current');
+  const disk = $('root-disk');
+  if (!s) {
+    cur.textContent = '未读取数据目录…';
+    disk.textContent = '';
+    return;
+  }
+  cur.textContent = s.root;
+  cur.title = s.root;
+  const d = s.disk;
+  let t = `${s.n_sessions} 个会话`;
+  if (d) t += ` · 剩余 ${fmtGb(d.free_gb)} / ${fmtGb(d.total_gb)} (${d.free_pct}%)`;
+  if (!s.writable) t += ' · 只读';
+  disk.textContent = t;
+  disk.classList.toggle('warn', !!d && d.free_pct < 10);
+}
+
+async function loadSettings() {
+  try {
+    state.settings = await api('/api/settings');
+  } catch { state.settings = null; }
+  renderRootBar();
+}
+
+function setDialogMsg(text, kind) {
+  const el = $('root-dialog-msg');
+  el.textContent = text || '';
+  el.className = 'dialog-msg' + (kind ? ' ' + kind : '');
+}
+
+function renderDrives(drives) {
+  const box = $('root-drives');
+  box.innerHTML = '';
+  for (const d of drives) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    const free = d.disk ? d.disk.free_gb : null;
+    if (d.disk && d.disk.free_pct < 10) b.classList.add('low');
+    b.innerHTML = `${esc(d.label)}<span class="free">${free === null ? '' :
+      '剩余 ' + esc(String(free)) + ' GB'}</span>`;
+    b.onclick = () => browseTo(d.path);
+    box.appendChild(b);
+  }
+}
+
+function renderRecent(roots) {
+  const box = $('root-recent');
+  box.innerHTML = '';
+  if (!roots || !roots.length) {
+    box.textContent = '（暂无）';
+    return;
+  }
+  for (const r of roots) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.textContent = r;
+    b.title = r;
+    b.onclick = () => browseTo(r);
+    box.appendChild(b);
+  }
+}
+
+function renderAcq(info) {
+  if (!info) return;
+  $('acq-dir-input').value = info.base_dir || '';
+  const cfg = (info.configs || []).map((c) =>
+    `${c.path}${c.base_dir ? ' = ' + c.base_dir : '（无 base_dir）'}`).join('　|　');
+  const warn = info.in_sync ? '' : '  ⚠ 两个采集配置的 base_dir 不一致';
+  $('acq-hint').textContent = cfg + warn;
+}
+
+function renderEntries(data) {
+  const ul = $('root-entries');
+  ul.innerHTML = '';
+  const entries = data.entries || [];
+  if (!entries.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = '（没有子文件夹）';
+    ul.appendChild(li);
+  }
+  for (const e of entries) {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.className = 'ename';
+    name.textContent = e.name;
+    li.appendChild(name);
+    const mark = document.createElement('span');
+    mark.className = 'emark';
+    if (e.is_session) mark.textContent = '会话';
+    else if (e.n_sessions) mark.textContent = `${e.n_sessions} 个会话`;
+    li.appendChild(mark);
+    const pick = document.createElement('button');
+    pick.className = 'pick';
+    pick.textContent = '选择此项';
+    pick.onclick = (ev) => {
+      ev.stopPropagation();
+      state.browseTarget = e.path;
+      renderEntries(data);
+      $('root-path-input').value = e.path;
+    };
+    li.appendChild(pick);
+    li.onclick = () => browseTo(e.path);
+    li.classList.toggle('sel', state.browseTarget === e.path);
+    ul.appendChild(li);
+  }
+}
+
+async function browseTo(path) {
+  setDialogMsg('读取中…');
+  try {
+    const data = await api('/api/fs/list?path=' + encodeURIComponent(path));
+    state.browse = data;
+    state.browseTarget = data.path;
+    $('root-path-input').value = data.path;
+    $('root-up').disabled = !data.parent;
+    const d = data.disk;
+    let stat = `${data.path}　·　${data.n_sessions === null ? '会话数未统计（目录过大）' :
+      data.n_sessions + ' 个会话'}`;
+    if (d) stat += `　·　剩余 ${fmtGb(d.free_gb)} / ${fmtGb(d.total_gb)} (${d.free_pct}%)`;
+    if (!data.writable) stat += '　·　只读（缓存与标注将回退到仓库 var/ 或无法保存）';
+    $('root-browse-stat').textContent = stat;
+    renderEntries(data);
+    setDialogMsg('');
+  } catch (e) {
+    setDialogMsg('无法读取: ' + e.message, 'err');
+  }
+}
+
+async function openRootPicker() {
+  $('root-dialog').hidden = false;
+  setDialogMsg('');
+  if (!state.settings) await loadSettings();
+  const s = state.settings;
+  renderRecent(s ? s.recent_roots : []);
+  renderAcq(s ? s.acquisition : null);
+  state.cache = null;
+  $('cache-stat').textContent = '尚未扫描';
+  $('cache-hint').textContent = '';
+  $('cache-clean').disabled = true;
+  $('acq-save').disabled = false;
+  try {
+    const { drives } = await api('/api/fs/drives');
+    renderDrives(drives);
+  } catch { /* leave the drive chips empty */ }
+  await browseTo(s ? s.root : $('root-path-input').value);
+}
+
+function closeRootPicker() { $('root-dialog').hidden = true; }
+
+async function switchRoot(path) {
+  if (!path) return;
+  setDialogMsg('切换中…');
+  $('root-use').disabled = true;
+  try {
+    const r = await fetch('/api/settings/root', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path,
+        sync_acquisition: $('root-sync-acq').checked,
+      }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const d = body.detail || body;
+      setDialogMsg((d && (d.message || d.error)) || `切换失败 (${r.status})`, 'err');
+      return;
+    }
+    state.settings = body;
+    renderRootBar();
+    renderRecent(body.recent_roots);
+    renderAcq(body.acquisition);
+    const acq = body.acquisition_applied;
+    if (acq && acq.error) setDialogMsg('数据目录已切换，但采集目录未更新: ' + acq.error, 'err');
+    closeRootPicker();
+    resetSessionView();          // stale frames belong to the previous root
+    await loadSessions();
+  } catch (e) {
+    setDialogMsg('切换失败: ' + e.message, 'err');
+  } finally {
+    $('root-use').disabled = false;
+  }
+}
+
+async function saveAcqDir() {
+  const base_dir = $('acq-dir-input').value.trim();
+  if (!base_dir) { setDialogMsg('采集输出目录不能为空', 'err'); return; }
+  setDialogMsg('保存中…');
+  try {
+    const r = await fetch('/api/settings/acquisition', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_dir, sync_configs: true }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const d = body.detail || body;
+      setDialogMsg((d && d.error) || `保存失败 (${r.status})`, 'err');
+      return;
+    }
+    renderAcq(body.acquisition);
+    setDialogMsg(`已写入 ${body.base_dir}${body.created ? '（目录已创建）' : ''}`, 'ok');
+  } catch (e) {
+    setDialogMsg('保存失败: ' + e.message, 'err');
+  }
+}
+
+async function revealCurrentDir() {
+  const p = (state.browse && state.browse.path) || $('root-path-input').value.trim();
+  if (!p) return;
+  try {
+    const r = await fetch('/api/fs/reveal', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: p }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      const d = body.detail || body;
+      setDialogMsg((d && d.error) || `打开失败 (${r.status})`, 'err');
+    }
+  } catch (e) {
+    setDialogMsg('打开失败: ' + e.message, 'err');
+  }
+}
+
+// Preview caches of deleted sessions are the main way the platform wastes
+// disk (a full 10-min session preload leaves ~0.9 GB behind).
+async function scanCache() {
+  $('cache-stat').textContent = '扫描中…（缓存文件很多时需数秒）';
+  $('cache-clean').disabled = true;
+  try {
+    const r = await fetch('/api/settings/cache');
+    const body = await r.json();
+    if (!r.ok) { $('cache-stat').textContent = '扫描失败'; return; }
+    state.cache = body;
+    $('cache-stat').textContent =
+      `共 ${body.total_mb} MB / ${(body.dirs || []).length} 个会话；`
+      + `其中失效 ${body.stale_mb} MB (${body.stale_count} 个)`;
+    $('cache-hint').textContent = (body.cache_roots || []).join('　|　');
+    $('cache-clean').disabled = !body.stale_count;
+  } catch (e) {
+    $('cache-stat').textContent = '扫描失败: ' + e.message;
+  }
+}
+
+async function cleanCache() {
+  const c = state.cache;
+  const names = (c && c.dirs || []).filter((d) => d.stale).map((d) => d.session);
+  if (!names.length) return;
+  const msg = `将删除 ${names.length} 个已不存在会话的预览缓存（约 ${c.stale_mb} MB）：\n`
+    + names.join(', ')
+    + '\n\n缓存可以重新生成（重新打开会话时自动重建），确认删除？';
+  if (!window.confirm(msg)) return;
+  $('cache-stat').textContent = '删除中…';
+  try {
+    const r = await fetch('/api/settings/cache/clean', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+    const body = await r.json();
+    if (!r.ok) {
+      const d = body.detail || body;
+      $('cache-stat').textContent = '删除失败: ' + ((d && d.error) || r.status);
+      return;
+    }
+    state.cache = null;
+    $('cache-clean').disabled = true;
+    $('cache-hint').textContent = '';
+    $('cache-stat').textContent =
+      `已删除 ${body.removed_count} 个缓存目录，释放 ${body.freed_mb} MB`
+      + (body.failed && body.failed.length ? `；${body.failed.length} 个失败` : '');
+  } catch (e) {
+    $('cache-stat').textContent = '删除失败: ' + e.message;
   }
 }
 
@@ -179,15 +483,14 @@ async function ensureAligned(name) {
   }
 }
 
-async function selectSession(name) {
-  state.session = name;
-  state.row = 0;
-  state.playing = false;
-  stopPlay();
-  // invalidate the previous session's preload/cache before loading the new one
-  state.preloadGen += 1;
+// Drop every decoded frame + in-flight preload for the current view. Called on
+// session switch AND on data-root switch (same session name can resolve to
+// different files on another root, so nothing may be reused).
+function clearFrameCache() {
+  state.preloadGen += 1;      // late responses write into the discarded Maps
   state.preloadTimer = null;
-  for (const cam of Object.keys(state.frameCache)) {   // revoke object URLs
+  state.preloadBusy = false;
+  for (const cam of Object.keys(state.frameCache)) {
     const c = state.frameCache[cam];
     if (!c) continue;
     for (const im of c.values()) {
@@ -201,6 +504,54 @@ async function selectSession(name) {
   state.serverPreload = null;
   clearTimeout(state.preloadPollTimer);
   $('preload-bar').hidden = true;
+}
+
+// Back to the "nothing selected" state (data-root switch, or a session that
+// could not be opened) — clears the canvases and disables the controls.
+function resetSessionView() {
+  stopPlay();
+  clearFrameCache();
+  resetPipeline();
+  clearTimeout(state.statusTimer);
+  state.session = null;
+  state.nRows = 0;
+  state.row = 0;
+  state.annotations = null;
+  state.trim = null;
+  state.status = 'pending';
+  state.rowStatus = null;
+  state.motionRows = [];
+  state.motionDpos = {};
+  state.motionGripper = {};
+  for (const cam of CAMERAS) {
+    const cv = $(`cam-${cam.slice(-1)}`);
+    if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+  }
+  $('session-name').textContent = '未选择会话';
+  $('row-info').textContent = '';
+  $('status-label').textContent = '';
+  $('curve-bar').hidden = true;
+  $('slider').max = 0;
+  $('slider').value = 0;
+  $('time-info').textContent = '';
+  $('trim-info').textContent = '';
+  $('btn-in').disabled = $('btn-out').disabled = true;
+  $('btn-save').disabled = $('btn-next-session').disabled = true;
+  $('status').disabled = true;
+  $('arm-tabs').innerHTML = '';
+  $('arm-status').innerHTML = '';
+  setPipelineEnabled(false);
+  document.querySelectorAll('#session-list li').forEach(
+    (li) => li.classList.remove('active'));
+}
+
+async function selectSession(name) {
+  state.session = name;
+  state.row = 0;
+  state.playing = false;
+  stopPlay();
+  // invalidate the previous session's preload/cache before loading the new one
+  clearFrameCache();
   resetPipeline();
   for (const cam of CAMERAS) {
     const cv = $(`cam-${cam.slice(-1)}`);
@@ -237,22 +588,8 @@ async function selectSession(name) {
     loadSessions();                                    // refresh badge
   } catch (err) {
     alert('无法打开会话: ' + err.message);
-    state.session = null;
-    state.nRows = 0;
+    resetSessionView();
     $('session-name').textContent = name + ' (不可用)';
-    $('btn-in').disabled = $('btn-out').disabled = $('btn-save').disabled = true;
-    $('status').disabled = true;
-    $('curve-bar').hidden = true;
-    $('preload-bar').hidden = true;
-    state.preloadGen += 1;
-    state.preloadTimer = null;
-    state.frameCache = {};
-    state.crit = {};
-    state.lastDraw = {};
-    state.serverPreload = null;
-    clearTimeout(state.preloadPollTimer);
-    resetPipeline();
-    setPipelineEnabled(false);
   }
 }
 
@@ -379,8 +716,21 @@ function startPipeline(kind, label) {
   $('pipe-log').hidden = true;
   (async () => {
     try {
-      const r = await fetch(`/api/sessions/${state.session}/pipeline/${kind}`,
-                            { method: 'POST' });
+      let url = `/api/sessions/${state.session}/pipeline/${kind}`;
+      let r = await fetch(url, { method: 'POST' });
+      if (r.status === 409) {
+        // video export without IN/OUT: ask before exporting the whole video
+        let body = {};
+        try { body = await r.json(); } catch { /* ignore */ }
+        const detail = body.detail || body;
+        if (detail && detail.warning) {
+          if (!window.confirm(detail.message || '未设置 IN/OUT 裁剪点，确认导出全部预览视频？')) {
+            st.textContent = '已取消导出';
+            return;
+          }
+          r = await fetch(url + '?confirm=1', { method: 'POST' });
+        }
+      }
       if (!r.ok) {
         let body = {};
         try { body = await r.json(); } catch { /* ignore */ }
@@ -552,6 +902,9 @@ function updatePreloadBar() {
       : `整段预加载 ${pct}%`;
   } else if (sp && sp.status === 'done') {
     pct = 100;
+  } else if (sp && sp.status === 'error') {
+    pct = Math.round(preloadProgress() * 100);
+    label = `整段预加载失败（改用窗口预加载）`;
   } else {
     pct = Math.round(preloadProgress() * 100);   // fallback: local window
     label = `预加载 ${pct}%`;
@@ -989,6 +1342,29 @@ $('btn-verify').onclick = () => startPipeline('verify', '验证对齐');
 $('btn-build').onclick = () => startPipeline('build', '构建数据集');
 $('btn-video').onclick = () => startPipeline('video', '导出预览视频');
 $('btn-meta').onclick = openMetaForm;
+// data-root picker
+$('btn-root').onclick = openRootPicker;
+$('root-close').onclick = closeRootPicker;
+$('root-use').onclick = () => switchRoot(state.browseTarget ||
+  $('root-path-input').value.trim());
+$('root-go').onclick = () => browseTo($('root-path-input').value.trim());
+$('root-up').onclick = () => {
+  if (state.browse && state.browse.parent) browseTo(state.browse.parent);
+};
+$('root-reveal').onclick = revealCurrentDir;
+$('cache-scan').onclick = scanCache;
+$('cache-clean').onclick = cleanCache;
+$('root-path-input').onkeydown = (e) => {
+  if (e.key === 'Enter') browseTo($('root-path-input').value.trim());
+};
+$('acq-save').onclick = saveAcqDir;
+$('acq-use-root').onclick = () => {
+  const p = (state.browse && state.browse.path) || $('root-path-input').value.trim();
+  if (p) $('acq-dir-input').value = p;
+};
+$('root-dialog').onclick = (e) => {                 // click the backdrop closes
+  if (e.target === $('root-dialog')) closeRootPicker();
+};
 $('meta-save').onclick = saveMeta;
 $('meta-cancel').onclick = () => { $('meta-form').hidden = true; };
 $('btn-pipe-log').onclick = () => {
@@ -1018,6 +1394,11 @@ $('motion').onclick = (e) => {
   stopPlay(); showRow(row);
 };
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('root-dialog').hidden) {
+    closeRootPicker();
+    return;
+  }
+  if (!$('root-dialog').hidden) return;              // picker owns the keyboard
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   const jump = Math.max(1, Math.round(state.speed * 5));
   if (e.key === 'ArrowLeft') step(-1);
@@ -1034,5 +1415,6 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'n' || e.key === 'N') nextSession();
 });
 
+loadSettings();
 loadSessions();
 startRenderLoop();

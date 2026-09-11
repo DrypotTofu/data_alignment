@@ -1,11 +1,26 @@
 # -*- coding: utf-8 -*-
-"""End-to-end test of the web pipeline + meta endpoints."""
+"""End-to-end test of the web pipeline + meta endpoints.
+
+Pick the session from the server (the smallest one with an alignment table) —
+the suite must not depend on a session that happened to exist on one machine.
+"""
 import json
 import time
 import urllib.request
 
 BASE = 'http://127.0.0.1:8766'
-SESS = 'fps_check'
+
+
+def _pick_session() -> str:
+    with urllib.request.urlopen(BASE + '/api/sessions', timeout=60) as r:
+        sessions = [s for s in json.loads(r.read())['sessions'] if s['n_rows']]
+    if not sessions:
+        raise SystemExit('no aligned session on the server')
+    sessions.sort(key=lambda s: s['n_rows'])
+    return sessions[0]['name']
+
+
+SESS = _pick_session()
 
 
 def req(method, path, body=None):

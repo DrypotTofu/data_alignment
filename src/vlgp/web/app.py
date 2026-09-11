@@ -20,25 +20,43 @@ import argparse
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from vlgp.annotations.task_hierarchy import TaskHierarchy
+from vlgp.acquisition.config import read_base_dir, set_base_dir
 from vlgp.review.write_session_meta import DEFAULT_TEMPLATE, TASK_TYPES
-from vlgp.web.frame_service import FrameService, PreloadRegistry
-from vlgp.web.pipeline_service import _pipeline
+from vlgp.web import fs_browse
+from vlgp.web.frame_service import (
+    FrameService,
+    PreloadRegistry,
+    clean_cache,
+    reset_frame_cache,
+    scan_cache,
+)
+from vlgp.web.pipeline_service import _pipeline, video_trim_args
 from vlgp.web.session_index import (
     CAMERA_ORDER,
     NoAlignment,
     SessionIndex,
     SessionNotFound,
 )
+from vlgp.web.settings import DEFAULT_ROOT, WebSettings
 
 STATIC_DIR = Path(__file__).parent / 'static'
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PORT = 8765
+# Acquisition configs whose top-level `base_dir` decides where NEW sessions are
+# recorded. default.yaml is what scripts/tools/start_manual_acquisition.bat
+# passes to manual_acquisition.py; example_acquisition.yaml is the default
+# --config of scripts/run_acquisition.py. Both are kept in sync by the picker
+# (housekeeping rule: these two must not drift apart).
+ACQ_CONFIGS = (REPO_ROOT / 'scripts' / 'config' / 'default.yaml',
+               REPO_ROOT / 'scripts' / 'config' / 'example_acquisition.yaml')
+ACQ_LAUNCHER = REPO_ROOT / 'scripts' / 'tools' / 'start_manual_acquisition.bat'
 # Single-process deployment assumption (CODE_REVIEW_20260830 三.8): the
 # preload registry and the JPEG LRU are module-level and only grow; with
 # multiple create_app() instances the LRU keys on SessionIndex identity and
@@ -80,8 +98,24 @@ class BatchIn(BaseModel):
         return v
 
 
-def create_app(index: SessionIndex | None = None) -> FastAPI:
-    index = index or SessionIndex()
+class RootIn(BaseModel):
+    path: str
+    sync_acquisition: bool = False
+
+
+class AcqDirIn(BaseModel):
+    base_dir: str
+    sync_configs: bool = True
+
+
+def create_app(index: SessionIndex | None = None,
+               settings: WebSettings | None = None) -> FastAPI:
+    settings = settings or WebSettings.load()
+    index = index or SessionIndex(settings=settings)
+    if not index.root.is_dir():
+        # persisted root vanished (unplugged/moved disk): keep serving the
+        # repo default instead of starting up empty
+        index.set_root(DEFAULT_ROOT)
     frames = FrameService(index)
     hier: TaskHierarchy | None = None
     try:
@@ -100,7 +134,89 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
     # ------------------------------------------------------------- sessions
     @app.get('/api/sessions')
     def list_sessions():
-        return {'sessions': index.list_sessions()}
+        return {'sessions': index.list_sessions(), 'root': str(index.root)}
+
+    # --------------------------------------------- data root / settings
+    @app.get('/api/settings')
+    def get_settings():
+        return _root_info(index, settings)
+
+    @app.put('/api/settings/root')
+    def set_root(body: RootIn, request: Request):
+        """Point the platform at another data folder (persisted).
+
+        Refused while background work still writes into the current root
+        (preload encoding / pipeline subprocesses) — those paths were resolved
+        against the old root."""
+        busy = [f'预加载: {s}' for s in _PRELOAD_REGISTRY.running()]
+        busy += [f'{j["label"]} ({j["id"]})' for j in _pipeline.running_jobs()]
+        if busy:
+            raise HTTPException(409, {
+                'busy': busy,
+                'message': '有后台任务正在运行，请等待完成后再切换数据目录：'
+                           + '；'.join(busy)})
+        previous = str(index.root)
+        try:
+            new_root = index.set_root(body.path)
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+        reset_frame_cache()
+        _PRELOAD_REGISTRY.reset()
+        settings.remember(new_root)
+        settings.save()
+        applied = None
+        if body.sync_acquisition:
+            applied = _write_acquisition_base_dir(str(new_root), sync=True)
+        out = _root_info(index, settings)
+        out['previous'] = previous
+        out['acquisition_applied'] = applied
+        return out
+
+    @app.get('/api/fs/drives')
+    def fs_drives():
+        return {'drives': fs_browse.list_drives()}
+
+    @app.get('/api/fs/list')
+    def fs_list(path: str, files: int = 0):
+        try:
+            return fs_browse.list_dir(path, include_files=bool(files))
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+
+    @app.post('/api/fs/reveal')
+    def fs_reveal(body: RootIn, request: Request):
+        """Open a folder in the OS file manager (local clients only)."""
+        if not _client_is_local(request):
+            raise HTTPException(403, 'only local clients may open folders')
+        try:
+            fs_browse.reveal(body.path)
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+        except OSError as e:
+            raise HTTPException(500, f'无法打开资源管理器: {e}')
+        return {'ok': True}
+
+    @app.put('/api/settings/acquisition')
+    def set_acquisition_dir(body: AcqDirIn):
+        """Where NEW sessions are recorded (acquisition config ``base_dir``)."""
+        value = _write_acquisition_base_dir(body.base_dir,
+                                            sync=body.sync_configs)
+        if value.get('error'):
+            raise HTTPException(422, {'error': value['error']})
+        return value
+
+    @app.get('/api/settings/cache')
+    def cache_scan():
+        """Preview-cache usage per session (stale = session no longer exists)."""
+        return scan_cache(index)
+
+    @app.post('/api/settings/cache/clean')
+    def cache_clean(body: dict):
+        """Delete cached previews of sessions that are gone (confirm=True)."""
+        try:
+            return clean_cache(index, bool(body.get('confirm')))
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
 
     @app.get('/api/sessions/{name}')
     def session_info(name: str):
@@ -211,7 +327,8 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
     # ----------------------------------------------------- pipeline (verify /
     # build / video — run the CLI tools as background subprocess jobs)
     @app.post('/api/sessions/{name}/pipeline/{kind}')
-    def pipeline_start(name: str, kind: str, no_copy: bool = False):
+    def pipeline_start(name: str, kind: str, no_copy: bool = False,
+                       confirm: bool = False):
         try:
             session_dir = index.session_dir(name)
         except SessionNotFound as e:
@@ -219,22 +336,63 @@ def create_app(index: SessionIndex | None = None) -> FastAPI:
         if kind == 'verify':
             return _pipeline.start('verify', '验证对齐',
                                    ['vlgp.alignment.verify_alignment',
-                                    '--session', str(session_dir)])
+                                    '--session', str(session_dir)],
+                                   log_root=index.log_root)
         if kind == 'build':
             argv = ['vlgp.dataset.build_srth_dataset',
                     '--session', str(session_dir)]
             if no_copy:
                 argv.append('--no-copy')
-            return _pipeline.start('build', '构建数据集', argv)
+            return _pipeline.start('build', '构建数据集', argv,
+                                   log_root=index.log_root)
         if kind == 'video':
+            # Cameras whose capture directory has no metadata.csv cannot be
+            # turned into a video at all (legacy single-camera test sessions
+            # carry the endoscope only). Skip them with a log line instead of
+            # aborting the whole export halfway through.
+            have = [c for c in CAMERA_ORDER
+                    if (session_dir / c / 'metadata.csv').exists()]
+            missing = [c for c in CAMERA_ORDER if c not in have]
+            if not have:
+                raise HTTPException(422, {
+                    'error': '会话中没有任何相机包含 metadata.csv，无法导出预览视频'})
+            header = []
             seq = []
-            for cam in CAMERA_ORDER:
+            for cam in have:
                 arm = cam.rsplit('_', 1)[-1]
                 seq.append(['vlgp.dataset.images_to_video',
                             '--dir', str(session_dir / cam),
                             '--output', str(session_dir / f'arm{arm}_preview.mp4'),
                             '--timestamp-overlay'])
-            return _pipeline.start_sequence('video', '导出预览视频', seq)
+            if missing:
+                header.append('跳过无 metadata.csv 的相机: '
+                              + ', '.join(missing))
+            ann = index.read_annotations(name)
+            trim = ann.get('trim') if isinstance(ann, dict) else None
+            if (isinstance(trim, dict) and 'start_row' in trim
+                    and 'end_row' in trim):
+                # export exactly the annotated IN/OUT segment per camera
+                args = video_trim_args(index, name, session_dir, trim)
+                for cam, cmd in zip(have, seq):
+                    a = args.get(cam)
+                    if a:
+                        cmd += ['--start-sec', f'{a["start_sec"]:.9f}',
+                                '--end-sec', f'{a["end_sec"]:.9f}']
+                        header.append(
+                            f'{cam}: 行 [{trim["start_row"]}, {trim["end_row"]}]'
+                            f' -> {a["start_sec"]:.6f}~{a["end_sec"]:.6f} s'
+                            f' ({a["source"]})')
+                return _pipeline.start_sequence(
+                    'video', '导出裁剪区间视频', seq, header_lines=header,
+                    log_root=index.log_root)
+            if not confirm:
+                raise HTTPException(409, {
+                    'warning': True,
+                    'message': '当前会话未设置 IN/OUT 裁剪点，导出将包含全部预览视频。'
+                               '确认继续？'})
+            return _pipeline.start_sequence('video', '导出预览视频(全部)', seq,
+                                            header_lines=header,
+                                            log_root=index.log_root)
         raise HTTPException(404, f'unknown pipeline kind {kind!r}')
 
     @app.get('/api/pipeline/{job_id}/status')
@@ -359,6 +517,89 @@ def _os_user() -> str:
     """Same as vlgp.review.review_session.os_user (USERNAME/USER env)."""
     import os
     return os.environ.get('USERNAME') or os.environ.get('USER') or ''
+
+
+def _root_info(index: SessionIndex, settings: WebSettings) -> dict:
+    """Everything the picker UI needs about the ACTIVE data root."""
+    return {
+        'root': str(index.root),
+        'exists': index.root.is_dir(),
+        'writable': fs_browse.is_writable(index.root),
+        'cache_dir': str(index.preview_root),
+        'log_dir': str(index.log_root),
+        'disk': fs_browse.disk_usage(index.root),
+        'n_sessions': len(index.list_sessions()),
+        'recent_roots': settings.existing_recent(),
+        'acquisition': _acquisition_info(),
+    }
+
+
+def _acquisition_info() -> dict:
+    """Acquisition output dirs (where NEW sessions get recorded)."""
+    configs = []
+    for p in ACQ_CONFIGS:
+        configs.append({'path': str(p), 'exists': p.exists(),
+                        'base_dir': read_base_dir(p) if p.exists() else None})
+    primary = next((c['base_dir'] for c in configs if c['base_dir']), None)
+    return {'base_dir': primary, 'configs': configs,
+            'launcher': str(ACQ_LAUNCHER) if ACQ_LAUNCHER.exists() else None,
+            'in_sync': len({c['base_dir'] for c in configs}) == 1}
+
+
+def _write_acquisition_base_dir(base_dir: str, sync: bool) -> dict:
+    """Write ``base_dir`` into the acquisition configs (comment-preserving).
+
+    Relative values are resolved against the repo root, because the
+    acquisition process resolves them against its CWD (the launchers cd to the
+    repo root) and a stored absolute path keeps working either way.
+    """
+    raw = (base_dir or '').strip().strip('"')
+    if not raw:
+        return {'error': '采集输出目录不能为空'}
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = REPO_ROOT / p
+    try:
+        p = p.resolve()
+    except OSError as e:
+        return {'error': f'无法解析路径 {raw!r}: {e}'}
+    created = False
+    if not p.is_dir():
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            created = True
+        except OSError as e:
+            return {'error': f'目录不存在且无法创建: {p} ({e})'}
+    written, failed = [], []
+    targets = list(ACQ_CONFIGS) if sync else [ACQ_CONFIGS[0]]
+    for cfg in targets:
+        if not cfg.exists():
+            failed.append({'path': str(cfg), 'error': '配置文件不存在'})
+            continue
+        try:
+            set_base_dir(cfg, str(p))
+            written.append(str(cfg))
+        except OSError as e:
+            failed.append({'path': str(cfg), 'error': str(e)})
+    return {'base_dir': str(p), 'created': created, 'written': written,
+            'failed': failed, 'acquisition': _acquisition_info()}
+
+
+def _client_is_local(request: Request) -> bool:
+    """Guard for the endpoint that opens OS windows (see /api/fs/reveal).
+
+    The platform is a single-user tool; this only blocks a public address from
+    spawning Explorer windows, it is not authentication.
+    """
+    import ipaddress
+    host = request.client.host if request.client else ''
+    if host in ('', 'testclient'):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private
 
 
 def _local_iso_seconds() -> str:

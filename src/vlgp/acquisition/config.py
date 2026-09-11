@@ -144,3 +144,43 @@ def load_config(path: str | Path) -> SessionConfig:
     apply_camera_bindings(config.sources, camera_bindings)
     validate_session_config(config)
     return config
+
+
+def read_base_dir(path: str | Path) -> str | None:
+    """``base_dir`` value of an acquisition config (None when absent)."""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    value = data.get('base_dir')
+    return None if value is None else str(value)
+
+
+def set_base_dir(path: str | Path, base_dir: str) -> None:
+    """Rewrite the top-level ``base_dir:`` line of an acquisition config.
+
+    Line-level rewrite on purpose: a full yaml.safe_dump would delete every
+    comment in these hand-maintained configs (camera bindings, format notes).
+    Creates the key right after the leading comment block when missing.
+
+    ``base_dir`` is resolved by the acquisition session relative to the
+    process CWD, so an absolute path is what the picker writes.
+    """
+    p = Path(path)
+    text = p.read_text(encoding='utf-8')
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith('base_dir:'):
+            indent = line[:len(line) - len(line.lstrip())]
+            eol = '\r\n' if line.endswith('\r\n') else '\n'
+            lines[i] = f'{indent}base_dir: {base_dir}{eol}'
+            break
+    else:
+        insert_at = 0
+        for i, line in enumerate(lines):        # after the leading comments
+            if line.strip() and not line.lstrip().startswith('#'):
+                break
+            insert_at = i + 1
+        lines.insert(insert_at, f'base_dir: {base_dir}\n')
+    p.write_text(''.join(lines), encoding='utf-8')
