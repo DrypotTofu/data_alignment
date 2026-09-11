@@ -403,11 +403,17 @@ async function cleanCache() {
   const c = state.cache;
   const names = (c && c.dirs || []).filter((d) => d.stale).map((d) => d.session);
   if (!names.length) return;
-  const msg = `将删除 ${names.length} 个已不存在会话的预览缓存（约 ${c.stale_mb} MB）：\n`
+  const files = (c.dirs || []).filter((d) => d.stale)
+    .reduce((n, d) => n + (d.files || 0), 0);
+  // deleting ~370k small JPEGs measured 286 s — say so before starting
+  const msg = `将删除 ${names.length} 个已不存在会话的预览缓存`
+    + `（约 ${c.stale_mb} MB / ${files} 个文件）：\n`
     + names.join(', ')
-    + '\n\n缓存可以重新生成（重新打开会话时自动重建），确认删除？';
+    + `\n\n缓存可以重新生成（重新打开会话时自动重建）。\n`
+    + `文件很多时删除需要数分钟，期间页面会一直显示"删除中"，请不要重复点击。\n\n确认删除？`;
   if (!window.confirm(msg)) return;
-  $('cache-stat').textContent = '删除中…';
+  $('cache-stat').textContent = `删除中…（${files} 个文件，可能需要数分钟）`;
+  $('cache-clean').disabled = true;
   try {
     const r = await fetch('/api/settings/cache/clean', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

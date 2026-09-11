@@ -142,6 +142,11 @@
         </div>
         <div id="root-browse-stat" class="browse-stat"></div>
         <ul id="root-entries" class="entries"></ul>
+        <div class="sub dialog-note">
+          提示：浏览会话时会在所选目录下生成 <code>_web_preview</code> 预览缓存
+          （约占 0.9 GB/10 分钟三机位会话，可随时删除），流水线日志写在
+          <code>_web_logs</code>。若所选目录是只读的备份盘，缓存会回退到仓库 var/。
+        </div>
         <div class="acq-block">
           <div class="acq-head">采集输出目录（新会话写入位置）</div>
           <div class="dialog-row">
