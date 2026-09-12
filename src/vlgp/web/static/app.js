@@ -72,6 +72,8 @@ const state = {
   acqPreflight: null,         // last preflight result (gates 开始录制)
   acqTimer: null,             // acquisition status poller
   acqRefreshed: false,        // session list refreshed after a recording
+  trash: null,                // last /api/trash listing
+  toastTimer: null,           // toast auto-hide handle
 };
 
 const $ = (id) => document.getElementById(id);
@@ -146,8 +148,140 @@ async function loadSessions() {
     if (ann.trim) t += ` · [${ann.trim.start_row}, ${ann.trim.end_row}]`;
     sub.textContent = t;
     li.appendChild(sub);
+    // delete button: stops propagation so it does not also select the session
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.textContent = '×';
+    del.title = '删除会话（默认移入回收站，可恢复）';
+    del.onclick = (ev) => { ev.stopPropagation(); deleteSessionFlow(s.name); };
+    li.appendChild(del);
     li.onclick = () => selectSession(s.name);
     ul.appendChild(li);
+  }
+}
+
+// ------------------------------------------------------------- toasts
+function toast(text, kind) {
+  const el = $('toast');
+  el.textContent = text;
+  el.className = kind || '';
+  el.hidden = false;
+  clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => { el.hidden = true; }, kind === 'err' ? 12000 : 6000);
+}
+
+// ------------------------------------------------------- session deletion
+// Raw acquisition data cannot be re-created without the rig, so the default is
+// a same-volume move into <data root>/_trash (instant even for 150 GB, and
+// restorable); permanent deletion is a second, explicit choice.
+async function deleteSessionFlow(name) {
+  let info;
+  try {
+    info = await acqJson(`/api/sessions/${encodeURIComponent(name)}/delete-preview`);
+  } catch (e) {
+    toast('无法读取会话信息: ' + e.message, 'err');
+    return;
+  }
+  const size = info.bytes >= 1073741824
+    ? `${info.gb} GB` : `${info.mb} MB`;
+  const cams = Object.keys(info.cameras || {}).map((c) => c.replace('camera_arm_', 'arm')).join(',');
+  const msg = `删除会话 ${name}？\n\n`
+    + `大小：${size}（${info.files} 个文件）\n`
+    + `对齐表：${info.has_alignment ? '有' : '无'}　相机：${cams || '无'}\n`
+    + `评审状态：${info.status}`
+    + (info.trim ? `　IN/OUT：[${info.trim.start_row}, ${info.trim.end_row}]` : '')
+    + `\n\n“确定”继续（下一步再选 回收站 / 永久删除），“取消”什么都不做。`;
+  if (!window.confirm(msg)) return;
+  const permanent = window.confirm(
+    `要怎么删？\n\n`
+    + `“确定” = 永久删除（不可恢复，立刻释放 ${size}）\n`
+    + `“取消” = 移入回收站 _trash（可恢复，但空间要等清空回收站才释放）`);
+  try {
+    const out = await acqJson(
+      `/api/sessions/${encodeURIComponent(name)}/delete`
+      + `?mode=${permanent ? 'permanent' : 'trash'}&confirm=1`, { method: 'POST' });
+    if (state.session === name) resetSessionView();
+    await loadSessions();
+    toast(permanent
+      ? `已永久删除 ${name}（释放 ${size}）`
+      : `已把 ${name} 移入回收站（${out.trash_entry}），可在「数据目录 → 回收站」恢复`);
+  } catch (e) {
+    toast('删除失败: ' + e.message, 'err');
+  }
+}
+
+// ------------------------------------------------------------ trash panel
+async function loadTrash() {
+  const ul = $('trash-list');
+  ul.innerHTML = '';
+  $('trash-stat').textContent = '读取中…';
+  try {
+    const data = await acqJson('/api/trash');
+    state.trash = data;
+    const n = data.count || 0;
+    $('trash-stat').textContent = n
+      ? `${n} 个已删除会话，共 ${data.total_gb} GB（清空后才真正释放）`
+      : '回收站是空的';
+    $('trash-empty').disabled = !n;
+    if (!n) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = `（${data.trash_dir} 为空）`;
+      ul.appendChild(li);
+      return;
+    }
+    for (const e of data.entries) {
+      const li = document.createElement('li');
+      const nm = document.createElement('span');
+      nm.className = 'tname';
+      nm.textContent = e.entry;
+      nm.title = e.path;
+      const sz = document.createElement('span');
+      sz.className = 'tsize';
+      sz.textContent = `${e.gb} GB`;
+      const btn = document.createElement('button');
+      btn.className = 'mini';
+      btn.textContent = '恢复';
+      btn.onclick = () => restoreTrash(e.entry);
+      li.appendChild(nm);
+      li.appendChild(sz);
+      li.appendChild(btn);
+      ul.appendChild(li);
+    }
+  } catch (e) {
+    $('trash-stat').textContent = '读取失败: ' + e.message;
+  }
+}
+
+async function restoreTrash(entry) {
+  try {
+    const out = await acqJson('/api/trash/restore', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry }),
+    });
+    toast(`已恢复为 ${out.name}`);
+    await loadTrash();
+    await loadSessions();
+  } catch (e) {
+    toast('恢复失败: ' + e.message, 'err');
+  }
+}
+
+async function emptyTrash() {
+  const t = state.trash;
+  if (!t || !t.count) return;
+  if (!window.confirm(`彻底删除回收站里的 ${t.count} 个会话（共 ${t.total_gb} GB）？\n\n`
+    + `这会永久删除，无法恢复，之后才真正释放空间。`)) return;
+  $('trash-stat').textContent = '清空中…（大目录需要一会儿）';
+  try {
+    const out = await acqJson('/api/trash/empty', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+    toast(`回收站已清空：${out.removed_count} 个会话，释放 ${out.freed_gb} GB`);
+    await loadTrash();
+  } catch (e) {
+    toast('清空失败: ' + e.message, 'err');
   }
 }
 
@@ -299,6 +433,10 @@ async function openRootPicker() {
   $('cache-stat').textContent = '尚未扫描';
   $('cache-hint').textContent = '';
   $('cache-clean').disabled = true;
+  $('trash-list').innerHTML = '';
+  $('trash-stat').textContent = '尚未扫描';
+  $('trash-empty').disabled = true;
+  state.trash = null;
   $('acq-save').disabled = false;
   try {
     const { drives } = await api('/api/fs/drives');
@@ -1750,6 +1888,8 @@ $('root-up').onclick = () => {
 $('root-reveal').onclick = revealCurrentDir;
 $('cache-scan').onclick = scanCache;
 $('cache-clean').onclick = cleanCache;
+$('trash-scan').onclick = loadTrash;
+$('trash-empty').onclick = emptyTrash;
 $('root-path-input').onkeydown = (e) => {
   if (e.key === 'Enter') browseTo($('root-path-input').value.trim());
 };

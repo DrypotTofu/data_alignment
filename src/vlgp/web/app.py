@@ -58,6 +58,13 @@ from vlgp.web.session_index import (
     SessionIndex,
     SessionNotFound,
 )
+from vlgp.web.session_admin import (
+    delete_session,
+    empty_trash,
+    restore_from_trash,
+    session_summary,
+    trash_entries,
+)
 from vlgp.web.settings import DEFAULT_ROOT, WebSettings
 
 STATIC_DIR = Path(__file__).parent / 'static'
@@ -212,11 +219,12 @@ def create_app(index: SessionIndex | None = None,
         Refused while background work still writes into the current root
         (preload encoding / pipeline subprocesses) — those paths were resolved
         against the old root."""
-        busy = [f'预加载: {s}' for s in _PRELOAD_REGISTRY.running()]
-        busy += [f'{j["label"]} ({j["id"]})' for j in _pipeline.running_jobs()]
-        if _acquisition.running():
-            st = _acquisition.status()
-            busy.append(f'数据采集: {st.get("session")} ({st.get("id")})')
+        busy = _busy_reason()
+        if busy:
+            raise HTTPException(409, {
+                'busy': busy,
+                'message': '有后台任务正在运行，请等待完成后再切换数据目录：'
+                           + '；'.join(busy)})
         if busy:
             raise HTTPException(409, {
                 'busy': busy,
@@ -508,6 +516,57 @@ def create_app(index: SessionIndex | None = None,
         return Response(content=data,
                         media_type='application/octet-stream')
 
+    # ------------------------------------------------- session delete / trash
+    @app.get('/api/sessions/{name}/delete-preview')
+    def session_delete_preview(name: str):
+        """Size + content of a session: what the delete confirmation shows."""
+        try:
+            return session_summary(index, name)
+        except SessionNotFound as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+
+    @app.post('/api/sessions/{name}/delete')
+    def session_delete(name: str, mode: str = 'trash', confirm: bool = False):
+        """Delete a session. Default mode=trash (recoverable, same-volume move);
+        mode=permanent frees the space immediately and cannot be undone."""
+        if mode not in ('trash', 'permanent'):
+            raise HTTPException(422, {'error': f'unknown mode {mode!r}'})
+        if _busy_reason():
+            raise HTTPException(409, {'busy': _busy_reason(),
+                                      'message': '有后台任务在运行：'
+                                                 + '；'.join(_busy_reason())})
+        try:
+            return delete_session(index, name, permanent=(mode == 'permanent'),
+                                 confirm=confirm)
+        except SessionNotFound as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+        except OSError as e:
+            raise HTTPException(500, {'error': f'删除失败: {e}'})
+
+    @app.get('/api/trash')
+    def trash_list():
+        return trash_entries(index)
+
+    @app.post('/api/trash/restore')
+    def trash_restore(body: dict):
+        try:
+            return restore_from_trash(index, str(body.get('entry', '')))
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+        except OSError as e:
+            raise HTTPException(500, {'error': f'恢复失败: {e}'})
+
+    @app.post('/api/trash/empty')
+    def trash_empty(body: dict):
+        try:
+            return empty_trash(index, bool(body.get('confirm')))
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+
     # ------------------------------------------------------- whole-session
     @app.post('/api/sessions/{name}/preload')
     def preload_session(name: str):
@@ -720,6 +779,16 @@ def create_app(index: SessionIndex | None = None,
                   name='static')
 
     return app
+
+
+def _busy_reason() -> list[str]:
+    """Background work that must not see its inputs move or disappear."""
+    busy = [f'预加载: {s}' for s in _PRELOAD_REGISTRY.running()]
+    busy += [f'{j["label"]} ({j["id"]})' for j in _pipeline.running_jobs()]
+    if _acquisition.running():
+        st = _acquisition.status()
+        busy.append(f'数据采集: {st.get("session")} ({st.get("id")})')
+    return busy
 
 
 def _os_user() -> str:

@@ -173,6 +173,22 @@ input.num { width: 56px; background: #2b3038; color: #d7dae0;
             border: 1px solid #3a4250; border-radius: 4px; padding: 2px 5px; }
 #acq-dialog .dialog-row select { background: #2b3038; color: #d7dae0;
             border: 1px solid #3a4250; border-radius: 4px; padding: 5px 6px; }
+/* session delete + trash */
+#session-list li .del { float: right; margin-left: 6px; padding: 0 5px;
+            font-size: 12px; line-height: 1.2; background: transparent;
+            border: 1px solid transparent; color: #7d8794; }
+#session-list li:hover .del { color: #e07070; border-color: #4a3030; }
+#session-list li .del:hover { background: #5a2b2b; color: #ffd0d0; }
+#trash-list { max-height: 20vh; }
+#trash-list .tname { flex: 1; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; font-family: Consolas, monospace; }
+#trash-list .tsize { color: #8fa3bf; font-size: 11px; }
+#toast { position: fixed; left: 16px; bottom: 16px; max-width: 60vw;
+         background: #23272d; border: 1px solid #3a4250; border-left: 3px solid #7ec87e;
+         border-radius: 4px; padding: 8px 12px; font-size: 13px; color: #d7dae0;
+         box-shadow: 0 6px 20px rgba(0,0,0,.4); z-index: 60; }
+#toast[hidden] { display: none; }
+#toast.err { border-left-color: #e07070; }
 .bind-table { width: 100%; border-collapse: collapse; font-size: 12px;
               margin-top: 4px; }
 .bind-table th { text-align: left; color: #8fa3bf; font-weight: 500;

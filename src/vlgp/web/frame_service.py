@@ -350,30 +350,10 @@ def cache_roots(index: SessionIndex) -> list[Path]:
 
 
 def _dir_stats(path: Path) -> tuple[int, int]:
-    """(files, bytes) under ``path`` via os.scandir.
-
-    DirEntry.stat() is served from the Windows directory enumeration, so this
-    costs no syscall per file: 367k cached JPEGs measure in ~0.8 s, against
-    ~107 s for os.walk + os.path.getsize (measured 2026-09-11) — the slow
-    version made the cache endpoint look like a hang.
-    """
-    files = total = 0
-    stack = [path]
-    while stack:
-        try:
-            with os.scandir(stack.pop()) as it:
-                for e in it:
-                    try:
-                        if e.is_dir(follow_symlinks=False):
-                            stack.append(e.path)
-                        else:
-                            files += 1
-                            total += e.stat(follow_symlinks=False).st_size
-                    except OSError:
-                        continue
-        except OSError:
-            continue
-    return files, total
+    """(files, bytes) under ``path`` — see vlgp.web.fs_browse.dir_stats
+    (os.scandir + DirEntry.stat: no syscall per file)."""
+    from vlgp.web.fs_browse import dir_stats
+    return dir_stats(path)
 
 
 def scan_cache(index: SessionIndex) -> dict:

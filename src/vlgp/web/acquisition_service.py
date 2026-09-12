@@ -30,6 +30,7 @@ from vlgp.acquisition.config import read_base_dir
 from vlgp.web.camera_service import session_dir_for, suggest_session_name
 
 STOP_WAIT_S = 90.0            # manual_acquisition: session.stop(timeout=30) + joins
+START_MARKER_WAIT_S = 40.0    # wait for "RECORDING STARTED" before writing the flag
 SIZE_SAMPLE_S = 3.0           # how often the session folder is measured
 MARK_SESSION = '=== ACQ SESSION '
 MARK_STARTED = '=== ACQ RECORDING STARTED'
@@ -90,6 +91,11 @@ class AcquisitionJob:
                 if code != 0 and not self.error:
                     self.error = f'采集进程退出码 {code}（详见日志）'
         self._sample_size(force=True)
+        # tidy up the per-job flag; its only purpose was this one recording
+        try:
+            self.stop_file.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _sample_size(self, force: bool = False) -> None:
         """Measure the session folder (bytes so far + smoothed MB/s + frames)."""
@@ -230,12 +236,19 @@ class AcquisitionJob:
             }
 
     def request_stop(self) -> dict:
-        """Create the stop flag (idempotent), then wait for a graceful stop."""
+        """Create the stop flag, then wait for the process to stop.
+
+        The flag is only created once the acquisition has printed its STARTED
+        marker: watching starts before that line, so this guarantees the request
+        cannot be mistaken for a stale leftover (and an early stop — clicked
+        during camera warm-up — still ends the recording as soon as it starts).
+        """
         with self._lock:
             if self.state in ('done', 'error'):
                 return {'state': self.state, 'waited_s': 0.0,
                         'still_running': False}
             self.state = 'stopping'
+        marked = self._wait_for_start_marker(START_MARKER_WAIT_S)
         try:
             self.stop_file.parent.mkdir(parents=True, exist_ok=True)
             self.stop_file.write_text(f'stop {time.time()}\n', encoding='utf-8')
@@ -248,8 +261,22 @@ class AcquisitionJob:
             time.sleep(0.3)
         waited = time.time() - t0
         self.refresh()
+        if not marked:
+            self.refresh()
         return {'state': self.state, 'waited_s': round(waited, 1),
-                'still_running': self.proc.poll() is None}
+                'still_running': self.proc.poll() is None,
+                'started_marker_seen': marked}
+
+    def _wait_for_start_marker(self, timeout_s: float) -> bool:
+        """Wait until the log shows that recording actually started."""
+        t0 = time.time()
+        while time.time() - t0 < timeout_s:
+            if MARK_STARTED in self._log_text():
+                return True
+            if self.proc.poll() is not None:
+                return False
+            time.sleep(0.2)
+        return MARK_STARTED in self._log_text()
 
     def kill(self) -> dict:
         """Emergency only: kills the process; the session may lack session.json

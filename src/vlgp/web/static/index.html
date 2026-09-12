@@ -159,6 +159,15 @@
           <div id="acq-hint" class="sub"></div>
         </div>
         <div class="acq-block">
+          <div class="acq-head">回收站（删除的会话可从这里恢复或彻底清空）</div>
+          <div class="dialog-row">
+            <span id="trash-stat" class="sub">尚未扫描</span>
+            <button id="trash-scan">扫描</button>
+            <button id="trash-empty" disabled>清空回收站</button>
+          </div>
+          <ul id="trash-list" class="entries"></ul>
+        </div>
+        <div class="acq-block">
           <div class="acq-head">预览缓存（每个 10 分钟 3 机位会话约 0.9 GB）</div>
           <div class="dialog-row">
             <span id="cache-stat" class="sub">尚未扫描</span>
@@ -242,6 +251,7 @@
       </div>
     </div>
   </div>
+  <div id="toast" hidden></div>
   <script src="app.js"></script>
 </body>
 </html>

@@ -24,6 +24,12 @@ import time
 from pathlib import Path
 
 STOP_FILE_POLL_S = 0.5
+# A flag file older than this is treated as a leftover from a previous run and
+# removed when watching starts. Anything fresher is a LIVE stop request: deleting
+# it (as an earlier version did unconditionally) silently ignored a stop that
+# arrived while the process was still starting up, and the recording then never
+# stopped.
+STALE_AFTER_S = 60.0
 
 
 class StopSignal:
@@ -44,15 +50,16 @@ class StopSignal:
 
     # ------------------------------------------------------------------ api
     def arm(self) -> 'StopSignal':
-        """Start watching (idempotent). Clears a leftover stop file first."""
+        """Start watching (idempotent). Removes only a STALE stop file.
+
+        A file created moments ago is a live stop request (the controller may
+        have asked to stop while this process was still importing), so it is
+        kept and honoured immediately; only an old leftover is cleared.
+        """
         if self._threads:
             return self
         if self.stop_file is not None:
-            # a stale file from a previous run would stop this one instantly
-            try:
-                self.stop_file.unlink(missing_ok=True)
-            except OSError:
-                pass
+            self._clear_if_stale()
             t = threading.Thread(target=self._watch_file, daemon=True,
                                  name='stop-file-watcher')
             t.start()
@@ -63,6 +70,21 @@ class StopSignal:
             t.start()
             self._threads.append(t)
         return self
+
+    def _clear_if_stale(self) -> None:
+        assert self.stop_file is not None
+        try:
+            age = time.time() - self.stop_file.stat().st_mtime
+        except OSError:
+            return
+        if age <= STALE_AFTER_S:
+            return
+        try:
+            self.stop_file.unlink()
+            print(f'(removed stale stop file {self.stop_file}, '
+                  f'{age:.0f}s old)', flush=True)
+        except OSError:
+            pass
 
     def triggered(self) -> bool:
         return self.event.is_set()

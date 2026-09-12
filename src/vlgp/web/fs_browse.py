@@ -88,6 +88,33 @@ def looks_like_session(p: Path) -> bool:
     return sl.alignment_path(p).exists()
 
 
+def dir_stats(path: str | Path) -> tuple[int, int]:
+    """(files, bytes) under ``path`` via os.scandir.
+
+    DirEntry.stat() is served from the Windows directory enumeration, so this
+    costs no syscall per file: 367k cached JPEGs measure in ~0.8 s against
+    ~107 s for os.walk + os.path.getsize (measured 2026-09-11). Shared by the
+    preview-cache scanner and the session-delete summary.
+    """
+    files = total = 0
+    stack = [Path(path)]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            stack.append(e.path)
+                        else:
+                            files += 1
+                            total += e.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return files, total
+
+
 def count_sessions(p: Path) -> int | None:
     """Number of session-like children; None when the folder is too big to
     scan cheaply (the picker then shows no count)."""
