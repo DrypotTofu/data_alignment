@@ -20,8 +20,11 @@ Storage model for the space check (measured on this rig's real sessions,
     test_20260828_160624   24.75 GB / 13343 rows = 1.94 MB/row -> 3.5 GB/min
     test_20260828_155305   18.89 GB / 10579 rows = 1.87 MB/row -> 3.4 GB/min
 
-so :data:`EST_GB_PER_MINUTE` = 3.2 GB/min is the default reservation rate
-(20 minutes -> ~64 GB).
+The calibration anchor is therefore ~1.8 MB per alignment row for the full rig
+(:data:`EST_MB_PER_ROW_FULL_RIG`), i.e. ~3.2 GB/min. Because writing a subset of
+the cameras scales with the pixels captured, the estimate for a given config is
+scaled by the ENABLED camera sources' pixel count — an endoscope-only recording
+(arm2 at 1280x720) is ~1.9 GB/min, not 3.2, which matters on a nearly-full disk.
 """
 from __future__ import annotations
 
@@ -45,7 +48,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCAN_MAX_INDEX = 8                  # scan indices 0..8 (10 devices is plenty)
 PREVIEW_MAX_W = 640
 JPEG_QUALITY = 82
-EST_GB_PER_MINUTE = 3.2             # see module docstring (measured 2.9-3.5)
+# Calibration: MB written per alignment row with the FULL rig enabled
+# (1280x720 endoscope + 2 x 640x480 wrists, PNG, 30 Hz) — see module docstring.
+EST_MB_PER_ROW_FULL_RIG = 1.8
+FULL_RIG_PIXELS = 1280 * 720 + 2 * (640 * 480)
+DEFAULT_ROWS_PER_S = 30.0
+EST_GB_PER_MINUTE = round(EST_MB_PER_ROW_FULL_RIG * DEFAULT_ROWS_PER_S * 60 / 1024, 2)  # 3.16 (legacy constant)
 DEFAULT_RESERVE_MINUTES = 20.0
 CAMERA_SOURCE_TYPES = {'process_camera', 'usb_camera', 'endoscope'}
 GB = 1024 ** 3
@@ -236,7 +244,44 @@ def _robot_check(source: dict, timeout_s: float = 5.0) -> dict:
             pass
 
 
-def _disk_check(base_dir: str | None, reserve_minutes: float) -> dict:
+def estimate_rate(cfg) -> dict:
+    """Estimated write rate for a config's ENABLED camera sources.
+
+    Scales the calibrated full-rig rate by the captured pixel count, so an
+    endoscope-only run reserves ~1.9 GB/min instead of the 3.2 GB/min the full
+    three-camera rig needs. Assumes PNG output (this rig's format).
+    """
+    pixels = 0
+    cams = []
+    rows_per_s = DEFAULT_ROWS_PER_S
+    for source in cfg.sources:
+        if source.get('type') not in CAMERA_SOURCE_TYPES:
+            continue
+        if source.get('enabled') is False:
+            continue
+        w = int(source.get('width') or 0)
+        h = int(source.get('height') or 0)
+        pixels += w * h
+        fps = source.get('target_fps') or source.get('fps') or DEFAULT_ROWS_PER_S
+        try:
+            rows_per_s = float(fps)
+        except (TypeError, ValueError):
+            pass
+        cams.append(f"{source.get('name')} {w}x{h}")
+    if not pixels:
+        return {'gb_per_minute': EST_GB_PER_MINUTE, 'mb_per_row': None,
+                'pixels': 0, 'cameras': [], 'basis': '无启用相机：按整机默认值'}
+    mb_per_row = EST_MB_PER_ROW_FULL_RIG * pixels / FULL_RIG_PIXELS
+    gb_per_min = mb_per_row * rows_per_s * 60 / 1024
+    return {'gb_per_minute': round(gb_per_min, 2),
+            'mb_per_row': round(mb_per_row, 3),
+            'pixels': pixels, 'cameras': cams, 'rows_per_s': rows_per_s,
+            'basis': f"启用 {len(cams)} 路相机（{'/'.join(cams)}）@"
+                     f"{rows_per_s:g} Hz，按整机 1.8 MB/行 按像素折算"}
+
+
+def _disk_check(base_dir: str | None, reserve_minutes: float,
+                rate: dict | None = None) -> dict:
     if not base_dir:
         return {'ok': False, 'detail': '配置里没有 base_dir，无法预估磁盘占用'}
     p = Path(base_dir).expanduser()
@@ -249,14 +294,16 @@ def _disk_check(base_dir: str | None, reserve_minutes: float) -> dict:
         usage = shutil.disk_usage(str(probe_dir))
     except OSError as e:
         return {'ok': False, 'detail': f'无法读取磁盘信息 {probe_dir}: {e}'}
-    need_gb = EST_GB_PER_MINUTE * float(reserve_minutes)
+    gb_per_min = (rate or {}).get('gb_per_minute', EST_GB_PER_MINUTE)
+    need_gb = gb_per_min * float(reserve_minutes)
     free_gb = usage.free / GB
-    detail = (f'{probe_dir} 剩余 {free_gb:.0f} GB；按 {EST_GB_PER_MINUTE} GB/分钟'
+    detail = (f'{probe_dir} 剩余 {free_gb:.0f} GB；按 {gb_per_min} GB/分钟'
+              f'（{(rate or {}).get("basis", "整机默认")}）'
               f' 预留 {reserve_minutes:.0f} 分钟 ≈ 需 {need_gb:.0f} GB')
     return {'ok': free_gb >= need_gb, 'detail': detail,
             'free_gb': round(free_gb, 1), 'need_gb': round(need_gb, 1),
             'reserve_minutes': float(reserve_minutes),
-            'gb_per_minute': EST_GB_PER_MINUTE, 'target_dir': str(p)}
+            'gb_per_minute': gb_per_min, 'target_dir': str(p)}
 
 
 def suggest_session_name(prefix: str = 'test') -> str:
@@ -340,7 +387,8 @@ def preflight(config_path: str | Path, reserve_minutes: float = DEFAULT_RESERVE_
                        'detail': robot['detail']})
 
     # ---- C. disk reservation for the expected recording time
-    disk = _disk_check(cfg.base_dir, reserve_minutes)
+    rate = estimate_rate(cfg)
+    disk = _disk_check(cfg.base_dir, reserve_minutes, rate)
     checks.append({'id': 'disk', 'label': '磁盘余量',
                    'status': 'ok' if disk['ok'] else 'fail',
                    'detail': disk['detail']})
@@ -360,8 +408,10 @@ def preflight(config_path: str | Path, reserve_minutes: float = DEFAULT_RESERVE_
             'failed': [c['id'] for c in failed],
             'session_name': name, 'session_dir': str(sess_dir) if sess_dir else None,
             'base_dir': cfg.base_dir,
-            'estimate': {'gb_per_minute': EST_GB_PER_MINUTE,
+            'rate': rate,
+            'estimate': {'gb_per_minute': rate['gb_per_minute'],
                          'reserve_minutes': float(reserve_minutes),
-                         'reserve_gb': round(EST_GB_PER_MINUTE * float(reserve_minutes), 1)},
+                         'reserve_gb': round(rate['gb_per_minute'] * float(reserve_minutes), 1),
+                         'basis': rate.get('basis')},
             'alignment_hint': (f'{sl.ALIGNMENT_REL} 需在录制后生成'
                                if sess_dir else None)}

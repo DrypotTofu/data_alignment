@@ -1,0 +1,96 @@
+# 仅内窥镜（arm2）+ 机器人位姿的采集配置 —— 腕部相机未接入时使用（2026-09-12）
+#
+# 与 default.yaml 的唯一差别：camera_arm_1 / camera_arm_3 置 enabled: false。
+# 原因（2026-09-12 实测，见 tech_repo/VLGP_Web采集集成_20260912.md §9）：
+#   index 0 = 内窥镜（arm2，实拍为镜内圆形暗角 + 4 通道 OSD）→ 与 camera_bindings.arm_2 一致
+#   index 1 = 笔记本内置摄像头（实拍为办公室画面）→ 绝不能绑给 arm1
+#   index 2/3 = 不存在
+# 所以腕部未接入时若用 default.yaml，录制会因 arm1/arm3 打不开而失败，
+# 且 arm1 会把笔记本摄像头画面录进数据。等腕部相机接回后改回 default.yaml。
+#
+# 用法：Web「采集」弹窗选择本配置，或
+#   python -m vlgp.capture.manual_acquisition --config scripts/config/arm2_only.yaml \
+#       --name test_YYYYMMDD_HHMMSS --stop-file var/web_acq/stop.flag
+base_dir: D:\AI4Surg\DataCollection\data_alignment\sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+camera_bindings:
+  arm_1: 1
+  arm_2: 0
+  arm_3: 3
+sources:
+- type: twincat
+  name: robot_pose
+  topic_name: robot/pose
+  ams_net_id: 169.254.226.99.1.1
+  ams_port: 851
+  ip_address: 192.168.22.22
+  cycle_period_ms: 1.0
+  selected_arm: 1
+  timestamp_mode: twincat
+  twincat_master_sync_alpha: 0.05
+  use_rtt_correction: true
+  output_dual_timestamps: true
+  num_connections: 1
+  output_all_arms: true
+  symbols:
+    joint_angles: Sir_RunRunShaw_Database.Joint_Angles
+    armframe_positions: Sir_RunRunShaw_Database.EndEffector_Coordinate_ArmFrame
+    scopeframe_positions: Sir_RunRunShaw_Database.EndEffector_Coordinate_ScopeFrame
+    orientations: Sir_RunRunShaw_Database.EndEffector_Orientation
+    instrument_types: Sir_RunRunShaw_Database.Instrument_Type
+    gripper_angle: Sir_RunRunShaw_Database.Gripper_Angle
+    gripper_signal: Sir_RunRunShaw_Database.Gripper_Signal
+    energy_instrument_status: Sir_RunRunShaw_Database.EnergyInstrument_Status
+- type: process_camera
+  name: camera_arm_2
+  topic_name: camera/arm_2/image_raw
+  arm_id: 2
+  width: 1280
+  height: 720
+  fps: 60
+  target_fps: 30
+  fourcc: MJPG
+  backend: dshow
+  image_format: png
+  png_compression: 1
+  writer_threads: 6
+  ready_timeout: 20.0
+- type: process_camera
+  name: camera_arm_1
+  topic_name: camera/arm_1/image_raw
+  arm_id: 1
+  width: 640
+  height: 480
+  fps: 60
+  target_fps: 30
+  fourcc: MJPG
+  backend: dshow
+  image_format: png
+  writer_threads: 2
+  exposure: -5
+  auto_wb: 1
+  brightness: 36
+  contrast: 5
+  saturation: 64
+  ready_timeout: 20.0
+  enabled: false          # 腕部相机未接入（2026-09-12）
+- type: process_camera
+  name: camera_arm_3
+  topic_name: camera/arm_3/image_raw
+  arm_id: 3
+  width: 640
+  height: 480
+  fps: 60
+  target_fps: 30
+  fourcc: MJPG
+  backend: dshow
+  image_format: png
+  exposure: -5
+  auto_wb: 1
+  brightness: 36
+  contrast: 5
+  saturation: 64
+  ready_timeout: 20.0
+  enabled: false          # 腕部相机未接入（2026-09-12）

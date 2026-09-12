@@ -63,13 +63,15 @@ from vlgp.web.settings import DEFAULT_ROOT, WebSettings
 STATIC_DIR = Path(__file__).parent / 'static'
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_PORT = 8765
-# Acquisition configs whose top-level `base_dir` decides where NEW sessions are
-# recorded. default.yaml is what scripts/tools/start_manual_acquisition.bat
-# passes to manual_acquisition.py; example_acquisition.yaml is the default
-# --config of scripts/run_acquisition.py. Both are kept in sync by the picker
-# (housekeeping rule: these two must not drift apart).
+# Acquisition configs offered in the Web「采集」panel. default.yaml is what
+# scripts/tools/start_manual_acquisition.bat passes to manual_acquisition.py;
+# example_acquisition.yaml is the default --config of scripts/run_acquisition.py;
+# arm2_only.yaml is the endoscope-only variant used while the wrist cameras are
+# not connected. base_dir / camera_bindings writes are kept in sync across them
+# (housekeeping rule: these must not drift apart).
 ACQ_CONFIGS = (REPO_ROOT / 'scripts' / 'config' / 'default.yaml',
-               REPO_ROOT / 'scripts' / 'config' / 'example_acquisition.yaml')
+               REPO_ROOT / 'scripts' / 'config' / 'example_acquisition.yaml',
+               REPO_ROOT / 'scripts' / 'config' / 'arm2_only.yaml')
 ACQ_LAUNCHER = REPO_ROOT / 'scripts' / 'tools' / 'start_manual_acquisition.bat'
 ACQ_STOP_DIR = REPO_ROOT / 'var' / 'web_acq'
 # Single-process deployment assumption (CODE_REVIEW_20260830 三.8): the
