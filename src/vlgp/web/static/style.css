@@ -148,7 +148,10 @@ button:disabled { opacity: .4; cursor: default; }
 .entries .pick { padding: 1px 8px; font-size: 11px; }
 .entries .empty { color: #7d8794; cursor: default; }
 .acq-block { margin-top: 10px; border-top: 1px solid #2f353d; padding-top: 8px; }
-.acq-head { font-size: 12px; color: #8fa3bf; margin-bottom: 5px; }
+/* one row per block header: title + inline controls (a flex label used to take a
+ * whole line and push the following button underneath it) */
+.acq-head { font-size: 12px; color: #8fa3bf; margin-bottom: 5px;
+            display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .acq-block .sub { font-size: 11px; color: #7d8794; margin-top: 4px;
                   word-break: break-all; }
 .dialog-foot { display: flex; gap: 10px; align-items: center; padding: 10px 12px;
@@ -156,7 +159,7 @@ button:disabled { opacity: .4; cursor: default; }
 .dialog-msg { flex: 1; font-size: 12px; color: #e0a13c; }
 .dialog-msg.err { color: #e07070; }
 .dialog-msg.ok { color: #7ec87e; }
-.chk { font-size: 12px; color: #a8b4c2; display: flex; align-items: center;
+.chk { font-size: 12px; color: #a8b4c2; display: inline-flex; align-items: center;
        gap: 4px; cursor: pointer; }
 button.primary { background: #2c5f8a; border-color: #3a76b0; color: #fff; }
 button.primary:hover:not(:disabled) { background: #356ea0; }
@@ -166,7 +169,7 @@ button.primary:hover:not(:disabled) { background: #356ea0; }
 .acq-state { margin-left: 10px; font-size: 12px; color: #ffd479; font-weight: 400; }
 .acq-state.rec { color: #e07070; }
 .acq-state.ok { color: #7ec87e; }
-button.mini { padding: 1px 8px; font-size: 11px; margin-left: 6px; }
+button.mini { padding: 1px 8px; font-size: 11px; }
 button.danger { border-color: #7a3a3a; color: #ffb0b0; }
 button.danger:hover:not(:disabled) { background: #5a2b2b; }
 input.num { width: 56px; background: #2b3038; color: #d7dae0;
