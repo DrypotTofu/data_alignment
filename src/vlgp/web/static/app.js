@@ -68,6 +68,10 @@ const state = {
   browse: null,               // last /api/fs/list payload (picker state)
   browseTarget: null,         // directory the picker would switch to
   cache: null,                // last /api/settings/cache scan (cache cleanup)
+  acqConfigs: null,           // /api/acquisition/configs payload
+  acqPreflight: null,         // last preflight result (gates 开始录制)
+  acqTimer: null,             // acquisition status poller
+  acqRefreshed: false,        // session list refreshed after a recording
 };
 
 const $ = (id) => document.getElementById(id);
@@ -358,6 +362,372 @@ async function saveAcqDir() {
     setDialogMsg(`已写入 ${body.base_dir}${body.created ? '（目录已创建）' : ''}`, 'ok');
   } catch (e) {
     setDialogMsg('保存失败: ' + e.message, 'err');
+  }
+}
+
+// =========================================================== acquisition UI
+// Camera binding (grab a frame per index to identify the device) + recording
+// control. The server refuses camera access while a recording runs, so the
+// buttons follow the job state.
+const ACQ_SCAN_INDEXES = 8;
+
+function setAcqMsg(text, kind) {
+  const el = $('acq-msg');
+  el.textContent = text || '';
+  el.className = 'dialog-msg' + (kind ? ' ' + kind : '');
+}
+
+async function acqJson(path, opts) {
+  const r = await fetch(path, opts);
+  let body = {};
+  try { body = await r.json(); } catch { /* empty body */ }
+  if (!r.ok) {
+    const d = body.detail || body;
+    const msg = (d && (d.message || d.error)) || (typeof d === 'string' ? d : '')
+      || `${r.status} ${r.statusText}`;
+    const err = new Error(msg);
+    err.status = r.status;
+    err.body = d;
+    throw err;
+  }
+  return body;
+}
+
+async function openAcqDialog() {
+  $('acq-dialog').hidden = false;
+  setAcqMsg('');
+  $('acq-log').hidden = true;
+  await loadAcqConfigs();
+  await pollAcq();
+}
+
+function closeAcqDialog() {
+  $('acq-dialog').hidden = true;
+  clearTimeout(state.acqTimer);
+  state.acqTimer = null;
+}
+
+async function loadAcqConfigs() {
+  try {
+    const data = await acqJson('/api/acquisition/configs');
+    state.acqConfigs = data.configs || [];
+    const sel = $('acq-config');
+    const keep = sel.value;
+    sel.innerHTML = '';
+    for (const c of state.acqConfigs) {
+      const o = document.createElement('option');
+      o.value = c.path;
+      o.textContent = `${c.name}${c.exists ? '' : '（缺失）'}`;
+      sel.appendChild(o);
+    }
+    if (keep && state.acqConfigs.some((c) => c.path === keep)) sel.value = keep;
+    if (!$('acq-name').value) $('acq-name').value = data.suggested_name || '';
+    renderAcqCameras();
+    renderAcqTarget();
+    setAcqState(data.status);
+  } catch (e) {
+    setAcqMsg('读取采集配置失败: ' + e.message, 'err');
+  }
+}
+
+function currentAcqConfig() {
+  const p = $('acq-config').value;
+  return (state.acqConfigs || []).find((c) => c.path === p) || null;
+}
+
+function renderAcqTarget() {
+  const c = currentAcqConfig();
+  const base = c && c.base_dir ? c.base_dir : '(未设置 base_dir)';
+  const name = $('acq-name').value.trim() || '(未命名)';
+  $('acq-target').textContent =
+    `输出目录: ${base}　|　会话: ${name}　|　对齐表在录制后生成`;
+}
+
+function renderAcqCameras() {
+  const c = currentAcqConfig();
+  const t = $('acq-bind-table');
+  t.innerHTML = '';
+  if (!c) return;
+  if (c.errors && c.errors.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 5;
+    td.className = 'err';
+    td.textContent = '配置校验失败: ' + c.errors.join(' / ');
+    tr.appendChild(td);
+    t.appendChild(tr);
+    return;
+  }
+  const head = document.createElement('tr');
+  for (const h of ['相机', 'arm', 'index', '分辨率/FPS', '预览']) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    head.appendChild(th);
+  }
+  t.appendChild(head);
+
+  for (const cam of c.cameras || []) {
+    const tr = document.createElement('tr');
+    if (!cam.enabled) tr.className = 'off';
+
+    const name = document.createElement('td');
+    name.textContent = cam.name + (cam.enabled ? '' : '（已禁用）');
+    tr.appendChild(name);
+
+    const arm = document.createElement('td');
+    arm.textContent = cam.arm_id === null || cam.arm_id === undefined
+      ? '—' : `arm${cam.arm_id}`;
+    tr.appendChild(arm);
+
+    const idx = document.createElement('td');
+    const sel = document.createElement('select');
+    sel.dataset.name = cam.name;
+    for (let i = 0; i <= ACQ_SCAN_INDEXES; i++) {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = String(i);
+      sel.appendChild(o);
+    }
+    sel.value = String(cam.camera_index ?? 0);
+    idx.appendChild(sel);
+    tr.appendChild(idx);
+
+    const res = document.createElement('td');
+    res.textContent = `${cam.width || '?'}x${cam.height || '?'}`
+      + `${cam.target_fps ? ' @' + cam.target_fps : (cam.fps ? ' @' + cam.fps : '')}`;
+    tr.appendChild(res);
+
+    const pv = document.createElement('td');
+    const box = document.createElement('div');
+    box.className = 'sub';
+    box.dataset.preview = cam.name;
+    box.textContent = '—';
+    const btn = document.createElement('button');
+    btn.className = 'mini';
+    btn.textContent = '预览';
+    btn.onclick = () => previewCamera(cam.name, sel.value, box);
+    pv.appendChild(btn);
+    pv.appendChild(box);
+    tr.appendChild(pv);
+
+    t.appendChild(tr);
+  }
+}
+
+async function previewCamera(name, index, box) {
+  box.textContent = '抓帧中…';
+  try {
+    const url = `/api/acquisition/cameras/preview?index=${encodeURIComponent(index)}`
+      + '&width=640&height=480';
+    const r = await fetch(url);
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      const d = body.detail || body;
+      box.textContent = '';
+      box.className = 'err';
+      box.textContent = (d && d.error) || `失败 (${r.status})`;
+      return;
+    }
+    const blob = await r.blob();
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(blob);
+    img.title = `index ${index} · ${r.headers.get('X-Camera-Size') || ''}`;
+    const meta = document.createElement('div');
+    meta.textContent = `index ${index} ${r.headers.get('X-Camera-Size') || ''}`;
+    box.textContent = '';
+    box.className = 'sub';
+    box.appendChild(img);
+    box.appendChild(meta);
+  } catch (e) {
+    box.className = 'err';
+    box.textContent = '失败: ' + e.message;
+  }
+}
+
+async function scanCameras() {
+  const out = $('acq-scan-result');
+  out.textContent = '扫描中…（逐个打开 index 0..8，约需数秒）';
+  try {
+    const data = await acqJson('/api/acquisition/cameras/scan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ max_index: ACQ_SCAN_INDEXES }),
+    });
+    const parts = (data.entries || []).map((e) => (e.opened
+      ? `index ${e.index}: ${e.width}x${e.height} @${e.fps}`
+        + (e.frame_read ? '' : '（取不到帧）')
+      : `index ${e.index}: 无`));
+    out.textContent = `找到可用: ${(data.found || []).join(', ') || '无'}`
+      + `（${data.elapsed_s}s）　` + parts.join('　|　');
+  } catch (e) {
+    out.textContent = '扫描失败: ' + e.message;
+  }
+}
+
+async function saveBindings() {
+  const cfg = currentAcqConfig();
+  if (!cfg) return;
+  const bindings = {};
+  document.querySelectorAll('#acq-bind-table select[data-name]').forEach((sel) => {
+    const cam = (cfg.cameras || []).find((c) => c.name === sel.dataset.name);
+    if (cam && cam.arm_id) bindings[`arm_${cam.arm_id}`] = parseInt(sel.value, 10);
+  });
+  setAcqMsg('保存绑定…');
+  try {
+    const out = await acqJson('/api/acquisition/bindings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: cfg.path, bindings, sync_configs: true }),
+    });
+    setAcqMsg(`绑定已写入: ${JSON.stringify(out.bindings)}`, 'ok');
+    await loadAcqConfigs();
+  } catch (e) {
+    setAcqMsg('保存失败: ' + e.message, 'err');
+  }
+}
+
+async function runPreflight() {
+  const cfg = currentAcqConfig();
+  if (!cfg) return;
+  const ul = $('acq-checks');
+  ul.innerHTML = '';
+  setAcqMsg('自检中…（相机逐台抓帧 + ADS 连接 + 磁盘预估）');
+  try {
+    const data = await acqJson('/api/acquisition/preflight', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config: cfg.path,
+        reserve_minutes: parseFloat($('acq-reserve').value) || 20,
+        session_name: $('acq-name').value.trim() || null,
+      }),
+    });
+    for (const c of data.checks || []) {
+      const li = document.createElement('li');
+      const tag = document.createElement('span');
+      tag.className = 'tag ' + (c.status === 'ok' ? 'ok'
+        : c.status === 'fail' ? 'fail' : 'warn');
+      tag.textContent = c.status === 'ok' ? '通过' : c.status === 'fail' ? '失败' : '提示';
+      const detail = document.createElement('span');
+      detail.className = 'detail';
+      detail.textContent = ` ${c.label}: ${c.detail}`;
+      li.appendChild(tag);
+      li.appendChild(detail);
+      ul.appendChild(li);
+    }
+    state.acqPreflight = data;
+    setAcqMsg(data.ok
+      ? `自检通过（按 ${data.estimate.reserve_minutes} 分钟预留 `
+        + `${data.estimate.reserve_gb} GB）`
+      : `自检未通过: ${(data.failed || []).join(', ')} —— 仍可强制开始，但风险自负`,
+      data.ok ? 'ok' : 'err');
+  } catch (e) {
+    setAcqMsg('自检失败: ' + e.message, 'err');
+  }
+}
+
+async function startRecording() {
+  const cfg = currentAcqConfig();
+  if (!cfg) return;
+  const pf = state.acqPreflight;
+  if (!pf || pf.config !== cfg.path || !pf.ok) {
+    const warn = pf && pf.failed && pf.failed.length
+      ? `自检未通过（${pf.failed.join(', ')}）` : '尚未通过自检';
+    if (!window.confirm(`${warn}。\n仍要开始录制吗？（可能导致录制中断或磁盘写满）`)) return;
+  }
+  const name = $('acq-name').value.trim();
+  setAcqMsg('启动采集进程…');
+  try {
+    const out = await acqJson('/api/acquisition/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: cfg.path, name }),
+    });
+    if (out.busy) { setAcqMsg('已有录制在进行中', 'err'); return; }
+    setAcqMsg('已启动，等待录制开始…', 'ok');
+    $('acq-log').hidden = false;
+    pollAcq(true);
+  } catch (e) {
+    setAcqMsg('启动失败: ' + e.message, 'err');
+  }
+}
+
+async function stopRecording() {
+  if (!window.confirm('停止录制？（优雅停止：刷盘并写 session.json，需要几秒）')) return;
+  setAcqMsg('正在停止…');
+  try {
+    const out = await acqJson('/api/acquisition/stop', { method: 'POST' });
+    if (out.still_running) {
+      setAcqMsg(`仍在停止中（已等待 ${out.waited_s}s）`, 'err');
+    } else {
+      setAcqMsg('已停止', 'ok');
+    }
+    pollAcq(true);
+  } catch (e) {
+    setAcqMsg('停止失败: ' + e.message, 'err');
+  }
+}
+
+async function killRecording() {
+  if (!window.confirm('强制结束采集进程？\n\n这不是优雅停止：session.json 可能缺失、'
+    + 'CSV/图片流的尾部可能不完整。只有在“停止录制”长时间无响应时才使用。')) return;
+  try {
+    const out = await acqJson('/api/acquisition/kill', { method: 'POST' });
+    setAcqMsg(`已强制结束（exit ${out.exit_code}）`, 'err');
+    pollAcq(true);
+  } catch (e) {
+    setAcqMsg('强制结束失败: ' + e.message, 'err');
+  }
+}
+
+function setAcqState(st) {
+  const el = $('acq-state');
+  const recording = st && st.recording;
+  el.textContent = !st || st.state === 'idle' ? '空闲'
+    : st.state === 'starting' ? '准备中'
+      : st.state === 'recording' ? '● 录制中' : st.state === 'stopping' ? '停止中'
+        : st.state === 'done' ? '已结束' : '出错';
+  el.className = 'acq-state' + (recording ? ' rec'
+    : st && st.state === 'done' ? ' ok' : '');
+  $('acq-start').disabled = recording || (st && st.state === 'starting');
+  $('acq-stop').disabled = !recording;
+  $('acq-kill').disabled = !recording && !(st && st.state === 'stopping');
+  $('acq-scan').disabled = !!recording;
+}
+
+async function pollAcq(immediate) {
+  clearTimeout(state.acqTimer);
+  state.acqTimer = null;
+  if ($('acq-dialog').hidden) return;
+  try {
+    const st = await acqJson('/api/acquisition/status');
+    setAcqState(st);
+    if (st.state === 'idle') {
+      $('acq-live').textContent = '未开始';
+    } else {
+      $('acq-live').textContent =
+        `${st.state} · ${st.elapsed_s}s · 已写 ${st.gb_written} GB`
+        + (st.mb_per_s !== null && st.mb_per_s !== undefined
+          ? ` · ${st.mb_per_s} MB/s (${st.gb_per_min} GB/分钟)` : '')
+        + (st.stdin_failsafe ? '' : ' · [无 stdin 兜底]')
+        + (st.error ? ` · ${st.error}` : '');
+      if (!$('acq-log').hidden) {
+        const r = await fetch('/api/acquisition/log');
+        if (r.ok) $('acq-log').textContent = await r.text();
+      }
+      if (st.state !== 'recording' && st.state !== 'starting'
+          && st.state !== 'stopping') {
+        $('acq-stop').disabled = true;
+        $('acq-kill').disabled = true;
+        if (!state.acqRefreshed) {          // pick up the new session once
+          state.acqRefreshed = true;
+          loadSessions();
+          if (st.session) {
+            setAcqMsg(`录制结束：${st.session}（${st.gb_written} GB）`
+              + ' —— 会话列表已刷新，点开它会自动生成对齐表', 'ok');
+          }
+        }
+      }
+    }
+    state.acqTimer = setTimeout(() => pollAcq(), 1500);
+  } catch {
+    state.acqTimer = setTimeout(() => pollAcq(), 3000);
   }
 }
 
@@ -1371,6 +1741,32 @@ $('acq-use-root').onclick = () => {
 $('root-dialog').onclick = (e) => {                 // click the backdrop closes
   if (e.target === $('root-dialog')) closeRootPicker();
 };
+// acquisition panel
+$('btn-acq').onclick = openAcqDialog;
+$('acq-close').onclick = closeAcqDialog;
+$('acq-dialog').onclick = (e) => {
+  if (e.target === $('acq-dialog')) closeAcqDialog();
+};
+$('acq-config').onchange = () => { renderAcqCameras(); renderAcqTarget(); };
+$('acq-name').oninput = renderAcqTarget;
+$('acq-name-gen').onclick = async () => {
+  try {
+    const d = await acqJson('/api/acquisition/configs');
+    $('acq-name').value = d.suggested_name || '';
+    renderAcqTarget();
+  } catch (e) { setAcqMsg('生成会话名失败: ' + e.message, 'err'); }
+};
+$('acq-scan').onclick = scanCameras;
+$('acq-bind-save').onclick = saveBindings;
+$('acq-preflight').onclick = runPreflight;
+$('acq-start').onclick = startRecording;
+$('acq-stop').onclick = stopRecording;
+$('acq-kill').onclick = killRecording;
+$('acq-log-btn').onclick = () => {
+  const pre = $('acq-log');
+  pre.hidden = !pre.hidden;
+  if (!pre.hidden) pollAcq(true);
+};
 $('meta-save').onclick = saveMeta;
 $('meta-cancel').onclick = () => { $('meta-form').hidden = true; };
 $('btn-pipe-log').onclick = () => {
@@ -1400,11 +1796,11 @@ $('motion').onclick = (e) => {
   stopPlay(); showRow(row);
 };
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !$('root-dialog').hidden) {
-    closeRootPicker();
-    return;
+  if (e.key === 'Escape') {
+    if (!$('acq-dialog').hidden) { closeAcqDialog(); return; }
+    if (!$('root-dialog').hidden) { closeRootPicker(); return; }
   }
-  if (!$('root-dialog').hidden) return;              // picker owns the keyboard
+  if (!$('root-dialog').hidden || !$('acq-dialog').hidden) return;  // modal owns keys
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   const jump = Math.max(1, Math.round(state.speed * 5));
   if (e.key === 'ArrowLeft') step(-1);

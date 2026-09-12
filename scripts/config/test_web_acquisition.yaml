@@ -1,0 +1,48 @@
+# Hardware-free acquisition config (web/probe tests only).
+# Every physical source is disabled and replaced by a `reserved_arm` placeholder:
+# the session still starts, writes session.json, and stops gracefully — which is
+# exactly what the web acquisition plumbing needs to be tested without touching
+# cameras, the PLC or 50 GB of disk.
+base_dir: ./var/test_fixtures/acq_out
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+camera_bindings:
+  arm_1: 1
+  arm_2: 0
+  arm_3: 3
+sources:
+- type: twincat
+  name: robot_pose
+  topic_name: robot/pose
+  ams_net_id: 169.254.226.99.1.1
+  ams_port: 851
+  ip_address: 192.168.22.22
+  cycle_period_ms: 1.0
+  selected_arm: 1
+  timestamp_mode: twincat
+  output_all_arms: true
+  enabled: false              # no PLC access in tests
+- type: process_camera
+  name: camera_arm_2
+  topic_name: camera/arm_2/image_raw
+  arm_id: 2
+  width: 1280
+  height: 720
+  fps: 60
+  target_fps: 30
+  image_format: png
+  writer_threads: 2
+  enabled: false              # no camera access in tests
+- type: reserved_arm
+  name: camera_arm_1
+  topic_name: camera/arm_1/image_raw
+  arm_id: 1
+- type: reserved_arm
+  name: camera_arm_3
+  topic_name: camera/arm_3/image_raw
+  arm_id: 3
+- type: reserved_arm
+  name: camera_arm_4
+  topic_name: camera/arm_4/image_raw
+  arm_id: 4

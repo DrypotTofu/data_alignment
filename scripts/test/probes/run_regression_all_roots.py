@@ -53,6 +53,14 @@ def switch_root(base: str, path: str, tries: int = 120, delay: float = 5.0) -> d
 
 
 def run_suite(base: str, extra: list[str] | None = None) -> int:
+    """Run the regression; a root with no aligned session counts as SKIP, not a
+    failure (the repo sessions/ folder is legitimately empty once the data has
+    been archived to another disk)."""
+    _, body = api(base, 'GET', '/api/sessions')
+    aligned = [s['name'] for s in body['sessions'] if s.get('n_rows')]
+    if not aligned:
+        print(f'>>> SKIP: no aligned session in {body.get("root")}', flush=True)
+        return 0
     cmd = [sys.executable, '-u',
            str(REPO / 'scripts' / 'test' / 'verification' / 'web_regression.py'),
            '--base', base] + (extra or [])

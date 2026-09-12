@@ -184,3 +184,97 @@ def set_base_dir(path: str | Path, base_dir: str) -> None:
             insert_at = i + 1
         lines.insert(insert_at, f'base_dir: {base_dir}\n')
     p.write_text(''.join(lines), encoding='utf-8')
+
+
+def arm_key(arm_id: int) -> str:
+    """``1 -> 'arm_1'`` (the key format of the ``camera_bindings`` mapping)."""
+    return f'arm_{int(arm_id)}'
+
+
+def read_camera_bindings(path: str | Path) -> dict[str, int] | None:
+    """Top-level ``camera_bindings`` mapping (None when absent/unreadable)."""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    bindings = data.get('camera_bindings')
+    if not isinstance(bindings, dict):
+        return None
+    return {str(k): v for k, v in bindings.items()}
+
+
+def set_camera_bindings(path: str | Path, bindings: dict[str, int]) -> dict:
+    """Rewrite ``camera_bindings`` arm->index entries, preserving everything else.
+
+    Same line-level approach as :func:`set_base_dir` (a ``yaml.safe_dump`` would
+    erase the comments these configs rely on). Only the ``arm_N: idx`` lines
+    inside the ``camera_bindings`` block are touched; missing arms are appended
+    to that block (or the block is created after ``base_dir``); unrelated keys
+    and comments inside the block are left alone.
+
+    Returns ``{'updated': [...], 'added': [...], 'path': ...}``.
+    """
+    p = Path(path)
+    lines = p.read_text(encoding='utf-8').splitlines(keepends=True)
+    wanted = {str(k): int(v) for k, v in bindings.items()}
+
+    start = None
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith('camera_bindings:') and not line[:1].isspace():
+            start = i
+            break
+
+    updated: list[str] = []
+    added: list[str] = []
+    if start is None:
+        insert_at = 0
+        for i, line in enumerate(lines):        # after base_dir / comments
+            if line.lstrip().startswith('base_dir:'):
+                insert_at = i + 1
+                break
+        else:
+            for i, line in enumerate(lines):
+                if line.strip() and not line.lstrip().startswith('#'):
+                    break
+                insert_at = i + 1
+        block = ['camera_bindings:\n'] + [
+            f'  {k}: {wanted[k]}\n' for k in sorted(wanted, key=_arm_sort_key)]
+        lines[insert_at:insert_at] = block
+        added = sorted(wanted, key=_arm_sort_key)
+    else:
+        end = start + 1
+        while end < len(lines):
+            line = lines[end]
+            if line.strip() and not line[:1].isspace():
+                break                            # next top-level key
+            end += 1
+        indent = '  '
+        last_child = start
+        for i in range(start + 1, end):
+            line = lines[i]
+            if not line.strip() or line.lstrip().startswith('#'):
+                continue
+            key = line.split(':', 1)[0].strip()
+            last_child = i
+            if key in wanted:
+                lead = line[:len(line) - len(line.lstrip())]
+                eol = '\r\n' if line.endswith('\r\n') else '\n'
+                lines[i] = f'{lead}{key}: {wanted.pop(key)}{eol}'
+                updated.append(key)
+            elif line[:1].isspace():
+                indent = line[:len(line) - len(line.lstrip())] or indent
+        missing = sorted(wanted, key=_arm_sort_key)
+        lines[last_child + 1:last_child + 1] = [
+            f'{indent}{k}: {wanted[k]}\n' for k in missing]
+        added = missing
+    p.write_text(''.join(lines), encoding='utf-8')
+    return {'updated': updated, 'added': added, 'path': str(p)}
+
+
+def _arm_sort_key(key: str) -> tuple[int, str]:
+    try:
+        return (int(str(key).removeprefix('arm_')), key)
+    except ValueError:
+        return (99, key)

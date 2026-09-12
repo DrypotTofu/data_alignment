@@ -12,6 +12,7 @@
       <div id="root-bar">
         <div class="root-line">
           <span id="root-current" title="">未读取数据目录…</span>
+          <button id="btn-acq" title="相机绑定与数据采集">采集</button>
           <button id="btn-root" title="切换数据目录（其他磁盘 / 外置盘）">数据目录</button>
         </div>
         <div id="root-disk" class="sub"></div>
@@ -174,6 +175,70 @@
           <input type="checkbox" id="root-sync-acq"> 同步采集输出目录
         </label>
         <button id="root-use" class="primary">使用此目录</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="acq-dialog" hidden>
+    <div class="dialog-box wide">
+      <div class="dialog-head">
+        <span>相机绑定 · 数据采集</span>
+        <span id="acq-state" class="acq-state">空闲</span>
+        <button id="acq-close" class="dialog-x" title="关闭 (Esc)">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="acq-block">
+          <div class="acq-head">采集配置与会话</div>
+          <div class="dialog-row">
+            <select id="acq-config"></select>
+            <input id="acq-name" spellcheck="false" placeholder="会话名 test_YYYYMMDD_HHMMSS">
+            <button id="acq-name-gen" title="按当前时间生成">生成</button>
+          </div>
+          <div id="acq-target" class="sub"></div>
+        </div>
+
+        <div class="acq-block">
+          <div class="acq-head">
+            相机绑定（index n ↔ arm n）
+            <button id="acq-scan" class="mini">扫描相机</button>
+            <button id="acq-bind-save" class="mini primary">保存绑定</button>
+          </div>
+          <div id="acq-scan-result" class="sub"></div>
+          <table id="acq-bind-table" class="bind-table"></table>
+          <div class="sub dialog-note">
+            预览会在服务端打开该 index 抓一帧后立即释放设备 —— 录制中相机被占用，
+            预览与扫描会被禁止。若某路相机打不开，预览会给出具体错误。
+          </div>
+        </div>
+
+        <div class="acq-block">
+          <div class="acq-head">
+            开始前自检
+            <label class="chk">预留
+              <input id="acq-reserve" type="number" min="1" max="240" value="20"
+                     class="num"> 分钟
+            </label>
+            <button id="acq-preflight" class="mini">自检</button>
+          </div>
+          <ul id="acq-checks" class="checks"></ul>
+        </div>
+
+        <div class="acq-block">
+          <div class="acq-head">
+            录制
+            <button id="acq-start" class="mini primary">开始录制</button>
+            <button id="acq-stop" class="mini" disabled>停止录制</button>
+            <button id="acq-kill" class="mini danger" disabled
+                    title="强制结束：非优雅停止，数据尾部可能不完整">强制结束</button>
+            <button id="acq-log-btn" class="mini">日志</button>
+          </div>
+          <div id="acq-live" class="sub">未开始</div>
+          <pre id="acq-log" hidden></pre>
+        </div>
+      </div>
+      <div class="dialog-foot">
+        <span id="acq-msg" class="dialog-msg"></span>
+        <span class="sub">停止为优雅停止：刷盘 + 写 session.json</span>
       </div>
     </div>
   </div>

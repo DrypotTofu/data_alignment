@@ -160,3 +160,39 @@ button:disabled { opacity: .4; cursor: default; }
        gap: 4px; cursor: pointer; }
 button.primary { background: #2c5f8a; border-color: #3a76b0; color: #fff; }
 button.primary:hover:not(:disabled) { background: #356ea0; }
+
+/* ------------------------------------------------- camera binding + record */
+.dialog-box.wide { width: min(920px, 96vw); }
+.acq-state { margin-left: 10px; font-size: 12px; color: #ffd479; font-weight: 400; }
+.acq-state.rec { color: #e07070; }
+.acq-state.ok { color: #7ec87e; }
+button.mini { padding: 1px 8px; font-size: 11px; margin-left: 6px; }
+button.danger { border-color: #7a3a3a; color: #ffb0b0; }
+button.danger:hover:not(:disabled) { background: #5a2b2b; }
+input.num { width: 56px; background: #2b3038; color: #d7dae0;
+            border: 1px solid #3a4250; border-radius: 4px; padding: 2px 5px; }
+#acq-dialog .dialog-row select { background: #2b3038; color: #d7dae0;
+            border: 1px solid #3a4250; border-radius: 4px; padding: 5px 6px; }
+.bind-table { width: 100%; border-collapse: collapse; font-size: 12px;
+              margin-top: 4px; }
+.bind-table th { text-align: left; color: #8fa3bf; font-weight: 500;
+                 padding: 3px 6px; border-bottom: 1px solid #2f353d; }
+.bind-table td { padding: 3px 6px; border-bottom: 1px solid #262b31;
+                 vertical-align: middle; }
+.bind-table select { background: #2b3038; color: #d7dae0; border: 1px solid #3a4250;
+                     border-radius: 4px; padding: 2px 4px; }
+.bind-table .off { color: #7d8794; }
+.bind-table img { width: 128px; height: 72px; object-fit: cover;
+                  background: #14171b; border-radius: 3px; display: block; }
+.bind-table .err { color: #e07070; font-size: 11px; max-width: 260px; }
+.checks { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px; }
+.checks li { padding: 3px 0; border-bottom: 1px solid #262b31; }
+.checks .tag { display: inline-block; width: 44px; font-weight: 600; }
+.checks .ok { color: #7ec87e; }
+.checks .fail { color: #e07070; }
+.checks .warn { color: #e0a13c; }
+.checks .detail { color: #a8b4c2; }
+#acq-log { margin-top: 6px; max-height: 200px; overflow: auto; background: #14171b;
+           border-radius: 4px; padding: 8px; font-size: 11px;
+           font-family: Consolas, monospace; color: #b9c2cf; white-space: pre-wrap; }
+#acq-live { font-family: Consolas, monospace; }

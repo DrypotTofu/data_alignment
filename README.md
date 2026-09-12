@@ -86,6 +86,8 @@ python -m vlgp.alignment.align_camera_anchor --session sessions/<session_name>
 
 会话数据不限于仓库 `sessions/`：侧栏**「数据目录」**按钮可把平台指向任意文件夹（其他磁盘/外置盘/NAS），选择会持久化到 `var/web_settings.json`；预览缓存与流水线日志跟随所选目录（`<数据根>/_web_preview`、`<数据根>/_web_logs`），同一弹窗里可查看/修改**采集输出目录**（两份采集 yaml 的 `base_dir`）并清理已删除会话的失效缓存。有后台任务（预加载/流水线）运行时不允许切换目录。
 
+侧栏**「采集」**按钮把相机绑定与数据采集也搬进了 Web（与 `start_manual_acquisition.bat` 同一入口）：逐 index **抓帧预览**辨认相机 → 下拉分配 `arm_n` → 保存绑定（写回 `scripts/config/*.yaml`，保留注释）；录制前**自检**（相机能否取帧 / TwinCAT ADS 链路 / 磁盘余量按 20 分钟 ≈64 GB 预留 / 会话目录是否重名）；录制中实时显示时长、已写 GB、MB/s 与日志，**停止为优雅停止**（刷盘 + 写 `session.json`），结束后自动刷新会话列表并提示生成对齐表。录制期间相机预览、修改绑定、切换目录都会被拒绝（设备被采集进程独占）。命令行等价用法：`python -m vlgp.capture.manual_acquisition --config scripts/config/default.yaml --name <name> --stop-file <flag>`（`--stop-file` = 自动开始、出现该文件即优雅停止）。
+
 python -m vlgp.review.process_session --session sessions/<session_name> --skip-review
 
  # 5. 一键管线（或在 Web 评审后运行；会校验 annotations.json 状态，

@@ -30,6 +30,15 @@ from vlgp.annotations.task_hierarchy import TaskHierarchy
 from vlgp.acquisition.config import read_base_dir, set_base_dir
 from vlgp.review.write_session_meta import DEFAULT_TEMPLATE, TASK_TYPES
 from vlgp.web import fs_browse
+from vlgp.web.acquisition_service import _acquisition
+from vlgp.web.camera_service import (
+    config_cameras,
+    preflight,
+    preview_jpeg,
+    scan_cameras,
+    set_bindings,
+    suggest_session_name,
+)
 from vlgp.web.frame_service import (
     FrameService,
     PreloadRegistry,
@@ -37,7 +46,12 @@ from vlgp.web.frame_service import (
     reset_frame_cache,
     scan_cache,
 )
-from vlgp.web.pipeline_service import _pipeline, video_trim_args
+from vlgp.web.pipeline_service import (
+    LOG_TAIL_BYTES,
+    LOG_TAIL_LINES,
+    _pipeline,
+    video_trim_args,
+)
 from vlgp.web.session_index import (
     CAMERA_ORDER,
     NoAlignment,
@@ -57,6 +71,7 @@ DEFAULT_PORT = 8765
 ACQ_CONFIGS = (REPO_ROOT / 'scripts' / 'config' / 'default.yaml',
                REPO_ROOT / 'scripts' / 'config' / 'example_acquisition.yaml')
 ACQ_LAUNCHER = REPO_ROOT / 'scripts' / 'tools' / 'start_manual_acquisition.bat'
+ACQ_STOP_DIR = REPO_ROOT / 'var' / 'web_acq'
 # Single-process deployment assumption (CODE_REVIEW_20260830 三.8): the
 # preload registry and the JPEG LRU are module-level and only grow; with
 # multiple create_app() instances the LRU keys on SessionIndex identity and
@@ -108,6 +123,53 @@ class AcqDirIn(BaseModel):
     sync_configs: bool = True
 
 
+class ScanIn(BaseModel):
+    backend: str = 'dshow'
+    max_index: int = 8
+
+    @field_validator('max_index')
+    @classmethod
+    def _clamp(cls, v: int) -> int:
+        return min(16, max(0, int(v)))
+
+
+class BindingsIn(BaseModel):
+    config: str
+    bindings: dict[str, int]
+    sync_configs: bool = True
+
+
+class PreflightIn(BaseModel):
+    config: str
+    reserve_minutes: float = 20.0
+    session_name: str | None = None
+    check_cameras: bool = True
+    check_robot: bool = True
+
+
+class AcqStartIn(BaseModel):
+    config: str
+    name: str | None = None
+
+
+def _resolve_config(path: str) -> Path:
+    """Acquisition config path, restricted to the repo's scripts/config/."""
+    p = Path(path)
+    if not p.is_absolute():
+        p = REPO_ROOT / p
+    try:
+        p = p.resolve()
+    except OSError as e:
+        raise HTTPException(422, {'error': f'无法解析路径 {path!r}: {e}'})
+    allowed = (REPO_ROOT / 'scripts' / 'config').resolve()
+    if allowed not in p.parents or p.suffix not in ('.yaml', '.yml'):
+        raise HTTPException(422, {
+            'error': f'只允许 scripts/config/ 下的 YAML 配置，收到 {p}'})
+    if not p.is_file():
+        raise HTTPException(404, {'error': f'配置文件不存在: {p}'})
+    return p
+
+
 def create_app(index: SessionIndex | None = None,
                settings: WebSettings | None = None) -> FastAPI:
     settings = settings or WebSettings.load()
@@ -150,6 +212,9 @@ def create_app(index: SessionIndex | None = None,
         against the old root."""
         busy = [f'预加载: {s}' for s in _PRELOAD_REGISTRY.running()]
         busy += [f'{j["label"]} ({j["id"]})' for j in _pipeline.running_jobs()]
+        if _acquisition.running():
+            st = _acquisition.status()
+            busy.append(f'数据采集: {st.get("session")} ({st.get("id")})')
         if busy:
             raise HTTPException(409, {
                 'busy': busy,
@@ -217,6 +282,139 @@ def create_app(index: SessionIndex | None = None,
             return clean_cache(index, bool(body.get('confirm')))
         except ValueError as e:
             raise HTTPException(422, {'error': str(e)})
+
+    # --------------------------------------------------- acquisition (T15 ext)
+    # Camera binding + recording control. Every endpoint that would grab a
+    # camera is refused while a recording runs: the rig has one set of devices
+    # and the acquisition holds them exclusively.
+    @app.get('/api/acquisition/configs')
+    def acq_configs():
+        out = []
+        for p in ACQ_CONFIGS:
+            info = config_cameras(p) if p.is_file() else {'cameras': [],
+                                                          'bindings': {}}
+            out.append({'path': str(p), 'name': p.name, 'exists': p.is_file(),
+                        'base_dir': info.get('base_dir'),
+                        'bindings': info.get('bindings', {}),
+                        'cameras': info.get('cameras', []),
+                        'errors': info.get('errors', [])})
+        return {'configs': out, 'launcher': str(ACQ_LAUNCHER)
+                if ACQ_LAUNCHER.exists() else None,
+                'status': _acquisition.status(),
+                'suggested_name': suggest_session_name()}
+
+    @app.get('/api/acquisition/cameras')
+    def acq_cameras(config: str):
+        return config_cameras(_resolve_config(config))
+
+    @app.post('/api/acquisition/cameras/scan')
+    def acq_camera_scan(body: ScanIn):
+        if _acquisition.running():
+            raise HTTPException(409, {
+                'busy_acquisition': True,
+                'message': '录制中：相机被采集进程占用，停止后才能扫描'})
+        return scan_cameras(body.max_index, body.backend)
+
+    @app.get('/api/acquisition/cameras/preview')
+    def acq_camera_preview(index: int, width: int = 640, height: int = 480,
+                           backend: str = 'dshow', fourcc: str | None = None):
+        if _acquisition.running():
+            raise HTTPException(409, {
+                'busy_acquisition': True,
+                'message': '录制中：相机被采集进程占用，停止后才能预览'})
+        width = min(1920, max(32, int(width)))
+        height = min(1080, max(32, int(height)))
+        try:
+            data, meta = preview_jpeg(index, width, height, backend, fourcc)
+        except RuntimeError as e:
+            raise HTTPException(422, {'error': str(e), 'index': index})
+        return Response(content=data, media_type='image/jpeg',
+                        headers={'Cache-Control': 'no-store',
+                                 'X-Camera-Index': str(index),
+                                 'X-Camera-Size': f"{meta['width']}x{meta['height']}"})
+
+    @app.put('/api/acquisition/bindings')
+    def acq_set_bindings(body: BindingsIn):
+        if _acquisition.running():
+            raise HTTPException(409, {
+                'busy_acquisition': True,
+                'message': '录制中：不能改相机绑定（正在使用这些设备）'})
+        p = _resolve_config(body.config)
+        try:
+            result = set_bindings(p, body.bindings)
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+        written = [str(p)]
+        if body.sync_configs:
+            for other in ACQ_CONFIGS:
+                if other == p or not other.is_file():
+                    continue
+                try:
+                    set_bindings(other, body.bindings)
+                    written.append(str(other))
+                except ValueError as e:
+                    # the twin config may not have the same arms/sources — keep
+                    # it in sync when possible, never fail the primary write
+                    written.append(f'{other} 未同步: {e}')
+        return {**result, 'written': written}
+
+    @app.post('/api/acquisition/preflight')
+    def acq_preflight(body: PreflightIn):
+        if _acquisition.running():
+            raise HTTPException(409, {
+                'busy_acquisition': True,
+                'message': '已有录制在进行中'})
+        p = _resolve_config(body.config)
+        return preflight(p, body.reserve_minutes, body.session_name,
+                         body.check_cameras, body.check_robot)
+
+    @app.post('/api/acquisition/start')
+    def acq_start(body: AcqStartIn):
+        if _acquisition.running():
+            raise HTTPException(409, {
+                'busy_acquisition': True,
+                'message': '已有录制在进行中，先停止再开始新的录制'})
+        p = _resolve_config(body.config)
+        try:
+            return _acquisition.start(p, body.name, index.log_root, ACQ_STOP_DIR)
+        except ValueError as e:
+            raise HTTPException(422, {'error': str(e)})
+        except OSError as e:
+            raise HTTPException(500, {'error': f'启动采集进程失败: {e}'})
+
+    @app.post('/api/acquisition/stop')
+    def acq_stop():
+        job = _acquisition.current()
+        if job is None or job.proc.poll() is not None:
+            return {'state': 'idle', 'status': _acquisition.status()}
+        result = job.request_stop()
+        return {**result, 'status': _acquisition.status()}
+
+    @app.post('/api/acquisition/kill')
+    def acq_kill():
+        """Emergency: not a graceful stop (data tail may be incomplete)."""
+        job = _acquisition.current()
+        if job is None or job.proc.poll() is not None:
+            return {'state': 'idle', 'status': _acquisition.status()}
+        return job.kill()
+
+    @app.get('/api/acquisition/status')
+    def acq_status():
+        return _acquisition.status()
+
+    @app.get('/api/acquisition/log')
+    def acq_log():
+        job = _acquisition.current()
+        if job is None:
+            return Response(content='', media_type='text/plain; charset=utf-8')
+        try:
+            data = job.log_path.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            data = ''
+        if len(data) > LOG_TAIL_BYTES:
+            data = data[-LOG_TAIL_BYTES:]
+        return Response(content='\n'.join(data.splitlines()[-LOG_TAIL_LINES:]),
+                        media_type='text/plain; charset=utf-8')
 
     @app.get('/api/sessions/{name}')
     def session_info(name: str):
@@ -328,13 +526,22 @@ def create_app(index: SessionIndex | None = None,
     # build / video — run the CLI tools as background subprocess jobs)
     @app.post('/api/sessions/{name}/pipeline/{kind}')
     def pipeline_start(name: str, kind: str, no_copy: bool = False,
-                       confirm: bool = False):
+                       confirm: bool = False, force: bool = False):
         try:
             session_dir = index.session_dir(name)
         except SessionNotFound as e:
             raise HTTPException(404, str(e))
+        if _acquisition.running() and not force:
+            # verify/build/video compete for disk and CPU with the recording
+            st = _acquisition.status()
+            raise HTTPException(409, {
+                'warning': True,
+                'message': f'数据采集正在进行（{st.get("session")}）：'
+                           f'同时跑流水线会抢占磁盘和 CPU，可能影响录制帧率。'
+                           f'确认继续？'})
+        acq_note = ' [录制中]' if _acquisition.running() else ''
         if kind == 'verify':
-            return _pipeline.start('verify', '验证对齐',
+            return _pipeline.start('verify', '验证对齐' + acq_note,
                                    ['vlgp.alignment.verify_alignment',
                                     '--session', str(session_dir)],
                                    log_root=index.log_root)
@@ -343,7 +550,7 @@ def create_app(index: SessionIndex | None = None,
                     '--session', str(session_dir)]
             if no_copy:
                 argv.append('--no-copy')
-            return _pipeline.start('build', '构建数据集', argv,
+            return _pipeline.start('build', '构建数据集' + acq_note, argv,
                                    log_root=index.log_root)
         if kind == 'video':
             # Cameras whose capture directory has no metadata.csv cannot be
