@@ -103,7 +103,10 @@ button:disabled { opacity: .4; cursor: default; }
 #root-current { flex: 1; font-size: 12px; color: #cfe0f5; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; direction: rtl;
                 text-align: left; }
-#btn-root { padding: 2px 8px; font-size: 12px; }
+/* both sidebar buttons share one compact box model, otherwise #btn-acq falls
+ * back to the default button padding and ends up taller than #btn-root */
+#btn-root, #btn-acq { padding: 2px 8px; font-size: 12px; height: 24px;
+                      line-height: 1; white-space: nowrap; }
 #root-bar .sub { font-size: 11px; color: #7d8794; margin-top: 3px; }
 #root-bar .sub.warn { color: #e0a13c; }
 #root-dialog { position: fixed; inset: 0; background: rgba(0, 0, 0, .55);
