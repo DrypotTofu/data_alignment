@@ -71,7 +71,8 @@ const state = {
   acqConfigs: null,           // /api/acquisition/configs payload
   acqPreflight: null,         // last preflight result (gates 开始录制)
   acqTimer: null,             // acquisition status poller
-  acqRefreshed: false,        // session list refreshed after a recording
+  acqWasRecording: false,     // true while a run is live (list refresh edge)
+  pipeOpen: false,            // pipeline dialog visibility
   trash: null,                // last /api/trash listing
   toastTimer: null,           // toast auto-hide handle
 };
@@ -778,6 +779,7 @@ async function startRecording() {
       body: JSON.stringify({ config: cfg.path, name }),
     });
     if (out.busy) { setAcqMsg('已有录制在进行中', 'err'); return; }
+    state.acqWasRecording = true;      // enables the post-run list refresh
     setAcqMsg('已启动，等待录制开始…', 'ok');
     $('acq-log').hidden = false;
     pollAcq(true);
@@ -827,6 +829,8 @@ function setAcqState(st) {
   $('acq-stop').disabled = !recording;
   $('acq-kill').disabled = !recording && !(st && st.state === 'stopping');
   $('acq-scan').disabled = !!recording;
+  // a fresh recording of its own: allow the next completion to refresh once
+  if (recording) state.acqWasRecording = true;
 }
 
 async function pollAcq(immediate) {
@@ -836,9 +840,35 @@ async function pollAcq(immediate) {
   try {
     const st = await acqJson('/api/acquisition/status');
     setAcqState(st);
+    const live = $('acq-live');
+    const warn = $('acq-warn');
     if (st.state === 'idle') {
-      $('acq-live').textContent = '未开始';
+      // a finished run is NOT the current state: show it as "上次录制", so
+      // reopening the panel before a new recording reads 空闲
+      const last = st.last_run;
+      live.textContent = last
+        ? `未开始（上次：${last.session} · ${last.elapsed_s}s · `
+          + `${last.bytes_written >= 1073741824 ? last.gb_written + ' GB'
+            : last.mb_written + ' MB'} · `
+          + `${last.exit_code === 0 ? '正常结束' : '退出码 ' + last.exit_code}）`
+        : '未开始';
+      if (last && (last.error || (last.warnings || []).length)) {
+        warn.hidden = false;
+        warn.textContent = '⚠ 上次录制: '
+          + [last.error, ...(last.warnings || [])].filter(Boolean).join('  |  ');
+      } else {
+        warn.hidden = true;
+        warn.textContent = '';
+      }
+      // refresh the session list exactly once, when a run just finished
+      if (state.acqWasRecording && last) {
+        loadSessions();
+        setAcqMsg(`录制结束：${last.session}（${last.gb_written} GB）`
+          + ' —— 会话列表已刷新，点开它会自动生成对齐表', 'ok');
+      }
+      state.acqWasRecording = false;
     } else {
+      state.acqWasRecording = true;
       // small amounts in MB — "已写 0 GB" while 30 MB is on disk reads as broken
       const written = st.bytes_written >= 1073741824
         ? `${st.gb_written} GB` : `${st.mb_written} MB`;
@@ -846,14 +876,13 @@ async function pollAcq(immediate) {
         ? ' · 帧 ' + Object.entries(st.camera_frames)
           .map(([k, v]) => `${k.replace('camera_arm_', 'arm')}=${v}`).join(' ')
         : '';
-      $('acq-live').textContent =
+      live.textContent =
         `${st.state} · ${st.elapsed_s}s · 已写 ${written}`
         + (st.mb_per_s !== null && st.mb_per_s !== undefined
           ? ` · ${st.mb_per_s} MB/s (${st.gb_per_min} GB/分钟)` : '')
         + (st.state === 'starting' ? ' · 正在打开相机…' : '')
         + cams
         + (st.stdin_failsafe ? '' : ' · [无 stdin 兜底]');
-      const warn = $('acq-warn');
       if (st.warnings && st.warnings.length) {
         warn.hidden = false;
         warn.textContent = '⚠ ' + st.warnings.join('  |  ');
@@ -868,19 +897,6 @@ async function pollAcq(immediate) {
       if (!$('acq-log').hidden) {
         const r = await fetch('/api/acquisition/log');
         if (r.ok) $('acq-log').textContent = await r.text();
-      }
-      if (st.state !== 'recording' && st.state !== 'starting'
-          && st.state !== 'stopping') {
-        $('acq-stop').disabled = true;
-        $('acq-kill').disabled = true;
-        if (!state.acqRefreshed) {          // pick up the new session once
-          state.acqRefreshed = true;
-          loadSessions();
-          if (st.session) {
-            setAcqMsg(`录制结束：${st.session}（${st.gb_written} GB）`
-              + ' —— 会话列表已刷新，点开它会自动生成对齐表', 'ok');
-          }
-        }
       }
     }
     state.acqTimer = setTimeout(() => pollAcq(), 1500);
@@ -1228,10 +1244,31 @@ function frameCache(cam) {
 // ------------------------------------------------------------------ pipeline
 // Run the CLI pipeline steps (verify_alignment / build_srth_dataset /
 // images_to_video) as server-side background jobs, poll status, show the log.
+// The controls live in a centred dialog opened from the transport row (next to
+// 保存), because the pipeline runs *after* a review is saved.
+function openPipeDialog() {
+  $('pipe-dialog').hidden = false;
+  state.pipeOpen = true;
+  $('pipe-session').textContent = state.session || '（未选择会话）';
+  if (!state.session) {
+    $('pipe-status').textContent = '请先选择一个会话';
+  } else if (!state.pipelineJob && !$('pipe-status').textContent) {
+    $('pipe-status').textContent = '未运行';
+  } else if (state.pipelineJob) {
+    pollPipeline(state.pipelineJob);
+  }
+}
+
+function closePipeDialog() {
+  $('pipe-dialog').hidden = true;
+  state.pipeOpen = false;
+}
+
 function setPipelineEnabled(on) {
   for (const id of ['btn-verify', 'btn-build', 'btn-video', 'btn-meta']) {
     $(id).disabled = !on;
   }
+  $('btn-pipe').disabled = !on;
 }
 
 function resetPipeline() {
@@ -1240,41 +1277,72 @@ function resetPipeline() {
   state.pipelineJob = null;
   $('pipe-status').textContent = '';
   $('pipe-log').hidden = true;
+  $('meta-form').hidden = true;
+  setPipeBadge('');
+  setPipeMsg('');
+  closePipeDialog();
+}
+
+function setPipeBadge(text, kind) {
+  const el = $('pipe-badge');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'pipe-badge' + (kind ? ' ' + kind : '');
+}
+
+function setPipeMsg(text, kind) {
+  const el = $('pipe-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'dialog-msg' + (kind ? ' ' + kind : '');
 }
 
 function startPipeline(kind, label) {
   if (!state.session) return;
   if (state.pipelineJob) { alert('已有流水线任务在运行，请等待完成'); return; }
+  openPipeDialog();
   const st = $('pipe-status');
   st.textContent = `${label}启动中…`;
+  setPipeBadge(`${label} 启动中…`, 'busy');
+  setPipeMsg('');
   $('pipe-log').hidden = true;
   (async () => {
     try {
       let url = `/api/sessions/${state.session}/pipeline/${kind}`;
       let r = await fetch(url, { method: 'POST' });
       if (r.status === 409) {
-        // video export without IN/OUT: ask before exporting the whole video
+        // video export without IN/OUT / pipeline during a recording: ask first
         let body = {};
         try { body = await r.json(); } catch { /* ignore */ }
         const detail = body.detail || body;
         if (detail && detail.warning) {
-          if (!window.confirm(detail.message || '未设置 IN/OUT 裁剪点，确认导出全部预览视频？')) {
-            st.textContent = '已取消导出';
+          if (!window.confirm(detail.message || '确认继续？')) {
+            st.textContent = '已取消';
+            setPipeBadge('');
+            setPipeMsg('已取消', '');
             return;
           }
-          r = await fetch(url + '?confirm=1', { method: 'POST' });
+          r = await fetch(url + '?confirm=1&force=1', { method: 'POST' });
         }
       }
       if (!r.ok) {
         let body = {};
         try { body = await r.json(); } catch { /* ignore */ }
-        st.textContent = `启动失败: ${JSON.stringify(body.detail || body)}`;
+        const d = body.detail || body;
+        const msg = (d && (d.message || d.error)) || JSON.stringify(d);
+        st.textContent = `启动失败: ${msg}`;
+        setPipeBadge(`${label} 启动失败`, 'err');
+        setPipeMsg(`${label} 启动失败: ${msg}`, 'err');
         return;
       }
       const job = await r.json();
       state.pipelineJob = job.id;
       pollPipeline(job.id);
-    } catch (e) { st.textContent = '启动失败: ' + e.message; }
+    } catch (e) {
+      st.textContent = '启动失败: ' + e.message;
+      setPipeBadge(`${label} 启动失败`, 'err');
+      setPipeMsg(`${label} 启动失败: ${e.message}`, 'err');
+    }
   })();
 }
 
@@ -1287,14 +1355,27 @@ function pollPipeline(jobId) {
       const el = $('pipe-status');
       if (st.status === 'running') {
         el.textContent = `${st.label}运行中… (${Math.round((Date.now() / 1000) - st.started_at)}s)`;
+        setPipeBadge(`${st.label} 运行中…`, 'busy');
         pollPipeline(jobId);
       } else {
-        el.textContent = st.status === 'done'
+        const ok = st.status === 'done';
+        el.textContent = ok
           ? `${st.label}完成 (${st.elapsed_s}s)`
           : `${st.label}失败 (exit ${st.exit_code})`;
+        setPipeBadge(ok ? `${st.label} 完成` : `${st.label} 失败`, ok ? 'ok' : 'err');
+        setPipeMsg(ok ? `${st.label}完成，用时 ${st.elapsed_s}s`
+          : `${st.label}失败（exit ${st.exit_code}），详见下方日志`,
+        ok ? 'ok' : 'err');
         state.pipelineJob = null;
-        showPipeLog(jobId, true);          // auto-show the log on completion
-        if (st.status === 'done') loadSessions();  // build/video change session state
+        if (state.pipeOpen) {
+          showPipeLog(jobId, true);        // auto-show the log on completion
+        } else {
+          // the log lives inside the dialog: surface the result outside it
+          toast(ok ? `${st.label}完成（${st.elapsed_s}s）`
+            : `${st.label}失败（exit ${st.exit_code}）—— 打开「流水线」查看日志`,
+            ok ? '' : 'err');
+        }
+        if (ok) loadSessions();            // build/video change session state
       }
     } catch { pollPipeline(jobId); }       // transient error, keep polling
   }, 800);
@@ -1872,6 +1953,13 @@ $('btn-play').onclick = togglePlay;
 $('btn-save').onclick = saveAnnotations;
 $('btn-next-session').onclick = nextSession;
 // pipeline
+$('btn-pipe').onclick = () => {
+  if ($('pipe-dialog').hidden) openPipeDialog(); else closePipeDialog();
+};
+$('pipe-close').onclick = closePipeDialog;
+$('pipe-dialog').onclick = (e) => {
+  if (e.target === $('pipe-dialog')) closePipeDialog();
+};
 $('btn-verify').onclick = () => startPipeline('verify', '验证对齐');
 $('btn-build').onclick = () => startPipeline('build', '构建数据集');
 $('btn-video').onclick = () => startPipeline('video', '导出预览视频');
@@ -1958,9 +2046,12 @@ $('motion').onclick = (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (!$('acq-dialog').hidden) { closeAcqDialog(); return; }
+    if (!$('pipe-dialog').hidden) { closePipeDialog(); return; }
     if (!$('root-dialog').hidden) { closeRootPicker(); return; }
   }
-  if (!$('root-dialog').hidden || !$('acq-dialog').hidden) return;  // modal owns keys
+  // modal dialogs own the keyboard while open
+  if (!$('root-dialog').hidden || !$('acq-dialog').hidden
+      || !$('pipe-dialog').hidden) return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   const jump = Math.max(1, Math.round(state.speed * 5));
   if (e.key === 'ArrowLeft') step(-1);
@@ -1975,6 +2066,9 @@ document.addEventListener('keydown', (e) => {
     $('status').value = state.status; updateStatusLabel();
   } else if (e.key === 's' || e.key === 'S') saveAnnotations();
   else if (e.key === 'n' || e.key === 'N') nextSession();
+  else if (e.key === 'p' || e.key === 'P') {
+    if ($('pipe-dialog').hidden) openPipeDialog(); else closePipeDialog();
+  }
 });
 
 loadSettings();

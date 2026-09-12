@@ -74,20 +74,37 @@
             <option value="rejected">rejected</option>
           </select>
           <button id="btn-save" disabled>保存 (S)</button>
+          <button id="btn-pipe" disabled title="流水线：验证对齐 / 构建数据集 / 导出视频 / 写入元数据 (P)">流水线</button>
+          <span id="pipe-badge" class="pipe-badge"></span>
           <button id="btn-next-session" disabled>下一个 (N)</button>
         </div>
       </section>
-      <section id="pipeline">
-        <div class="pipe-head">
-          <span class="pipe-title">流水线</span>
-          <span id="pipe-status"></span>
-          <button id="btn-pipe-log" class="pipe-log-btn" title="查看运行日志">日志</button>
-        </div>
-        <div class="pipe-buttons">
-          <button id="btn-verify" disabled>验证对齐</button>
-          <button id="btn-build" disabled>构建数据集</button>
-          <button id="btn-video" disabled>导出视频</button>
-          <button id="btn-meta" disabled>写入元数据</button>
+    </main>
+  </div>
+
+  <div id="pipe-dialog" hidden>
+    <div class="dialog-box wide">
+      <div class="dialog-head">
+        <span>流水线</span>
+        <span id="pipe-session" class="acq-state"></span>
+        <button id="pipe-close" class="dialog-x" title="关闭 (Esc)">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="acq-block">
+          <div class="acq-head">
+            <span id="pipe-status">未运行</span>
+            <button id="btn-pipe-log" class="mini" title="查看运行日志">日志</button>
+          </div>
+          <div class="pipe-buttons">
+            <button id="btn-verify" disabled>验证对齐</button>
+            <button id="btn-build" disabled>构建数据集</button>
+            <button id="btn-video" disabled>导出视频</button>
+            <button id="btn-meta" disabled>写入元数据</button>
+          </div>
+          <div class="sub dialog-note">
+            顺序一般为：保存评审（IN/OUT + 状态）→ 验证对齐 → 构建数据集 → 导出视频；
+            写入元数据可在保存后随时做。运行日志在任务结束时自动展开。
+          </div>
         </div>
         <pre id="pipe-log" hidden></pre>
         <div id="meta-form" hidden>
@@ -116,8 +133,11 @@
             <button id="meta-cancel">取消</button>
           </div>
         </div>
-      </section>
-    </main>
+      </div>
+      <div class="dialog-foot">
+        <span id="pipe-msg" class="dialog-msg"></span>
+      </div>
+    </div>
   </div>
 
   <div id="root-dialog" hidden>

@@ -311,10 +311,20 @@ class AcquisitionRegistry:
         return bool(j and j.proc.poll() is None)
 
     def status(self) -> dict:
+        """Current recording state, or idle when nothing is recording.
+
+        A finished job is NOT reported as the current state: the panel used to
+        open with "已结束" (the previous run) even though nothing had started in
+        this session. Its summary is still available as ``last_run`` so the UI can
+        show "上次录制: …" separately.
+        """
         j = self.current()
         if j is None:
-            return {'state': 'idle', 'recording': False}
-        return j.status()
+            return {'state': 'idle', 'recording': False, 'last_run': None}
+        st = j.status()
+        if j.proc.poll() is not None:
+            return {'state': 'idle', 'recording': False, 'last_run': st}
+        return {**st, 'last_run': None}
 
     def start(self, config_path: str | Path, name: str | None,
               log_dir: Path, stop_dir: Path) -> dict:

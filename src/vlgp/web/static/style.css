@@ -111,10 +111,11 @@ button:disabled { opacity: .4; cursor: default; }
 #root-bar .sub.warn { color: #e0a13c; }
 /* both dialogs are centred overlays: leaving #acq-dialog out of this rule made it
  * render as a plain block at the end of the document (below the fold) */
-#root-dialog, #acq-dialog { position: fixed; inset: 0; background: rgba(0, 0, 0, .55);
+#root-dialog, #acq-dialog, #pipe-dialog { position: fixed; inset: 0;
+               background: rgba(0, 0, 0, .55);
                display: flex; align-items: center; justify-content: center;
                z-index: 50; }
-#root-dialog[hidden], #acq-dialog[hidden] { display: none; }
+#root-dialog[hidden], #acq-dialog[hidden], #pipe-dialog[hidden] { display: none; }
 .dialog-box { width: min(760px, 94vw); max-height: 88vh; display: flex;
               flex-direction: column; background: #23272d; border-radius: 8px;
               border: 1px solid #3a4250; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
@@ -222,3 +223,8 @@ input.num { width: 56px; background: #2b3038; color: #d7dae0;
 #acq-live { font-family: Consolas, monospace; }
 #acq-warn { margin-top: 4px; font-size: 12px; color: #e07070;
            font-family: Consolas, monospace; word-break: break-all; }
+/* pipeline trigger in the transport row + its status badge */
+.pipe-badge { font-size: 11px; color: #ffd479; white-space: nowrap; }
+.pipe-badge.busy { color: #e0a13c; }
+.pipe-badge.err { color: #e07070; }
+.pipe-badge.ok { color: #7ec87e; }

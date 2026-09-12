@@ -248,14 +248,25 @@ def main() -> int:
 
     t0 = time.time()
     st, stop = req('POST', '/api/acquisition/stop')
-    print(f"  stop: state={stop.get('state')} waited={stop.get('waited_s')}s")
+    print(f"  stop: state={stop.get('state')} waited={stop.get('waited_s')}s "
+          f"marker_seen={stop.get('started_marker_seen')}")
     check('graceful stop completed', stop.get('still_running') is False
           and stop.get('state') == 'done',
           json.dumps(stop, ensure_ascii=False)[:140])
-    final = wait_state({'done', 'error'}, timeout_s=30)
-    check('exit code 0', final.get('exit_code') == 0, str(final.get('exit_code')))
-    sess_dir = Path(final['session_dir'])
-    check('session.json written', (sess_dir / 'session.json').is_file())
+    check('stop waited for the RECORDING STARTED marker',
+          stop.get('started_marker_seen') is True, str(stop.get('started_marker_seen')))
+    # a finished run must NOT be reported as the current state (the panel used to
+    # open showing "已结束" before anything was started in this session)
+    final = wait_state({'idle', 'done', 'error'}, timeout_s=30)
+    last = final.get('last_run') or {}
+    check('registry reports idle after the run', final.get('state') == 'idle',
+          str(final.get('state')))
+    check('last run summary kept separately',
+          last.get('session') == 'acq_web_probe' and last.get('exit_code') == 0,
+          json.dumps({k: last.get(k) for k in ('session', 'exit_code', 'gb_written')},
+                     ensure_ascii=False))
+    sess_dir = Path(last.get('session_dir') or live.get('session_dir'))
+    check('session.json written', (sess_dir / 'session.json').is_file(), str(sess_dir))
     check('stop waited for the process (not an instant kill)',
           time.time() - t0 > 0.2, f'{time.time() - t0:.1f}s')
     st, log = req('GET', '/api/acquisition/log', raw=True)
@@ -285,9 +296,14 @@ def main() -> int:
     print('  kill ->', json.dumps({k: killed.get(k) for k in
                                    ('state', 'exit_code', 'error')},
                                   ensure_ascii=False)[:160])
-    check('kill marks the job as errored', killed.get('state') == 'error')
+    _, after_kill = req('GET', '/api/acquisition/status')
+    last_kill = after_kill.get('last_run') or killed
+    check('kill marks the job as errored',
+          killed.get('state') == 'error' or last_kill.get('state') == 'error',
+          f"kill={killed.get('state')} last={last_kill.get('state')}")
     check('kill warns about incomplete data',
-          '数据尾部' in (killed.get('error') or ''), str(killed.get('error'))[:100])
+          '数据尾部' in (killed.get('error') or last_kill.get('error') or ''),
+          str(killed.get('error') or last_kill.get('error'))[:100])
 
     print('=== 6. cleanup ===')
     st, idle = req('GET', '/api/acquisition/status')

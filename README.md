@@ -88,6 +88,8 @@ python -m vlgp.alignment.align_camera_anchor --session sessions/<session_name>
 
 侧栏**「采集」**按钮把相机绑定与数据采集也搬进了 Web（与 `start_manual_acquisition.bat` 同一入口）：逐 index **抓帧预览**辨认相机 → 下拉分配 `arm_n` → 保存绑定（写回 `scripts/config/*.yaml`，保留注释）；录制前**自检**（相机能否取帧 / TwinCAT ADS 链路 / 磁盘余量按 20 分钟 ≈64 GB 预留 / 会话目录是否重名）；录制中实时显示时长、已写 GB、MB/s、**每路相机帧数**与日志，**停止为优雅停止**（刷盘 + 写 `session.json`），结束后自动刷新会话列表并提示生成对齐表。录制期间相机预览、修改绑定、切换目录都会被拒绝（设备被采集进程独占）。命令行等价用法：`python -m vlgp.capture.manual_acquisition --config scripts/config/default.yaml --name <name> --stop-file <flag>`（`--stop-file` = 自动开始、出现该文件即优雅停止）。
 
+**流水线**：传输行 `保存 (S)` 与 `下一个 (N)` 之间的**「流水线」**按钮（快捷键 `P`）打开居中弹窗，内含验证对齐 / 构建数据集 / 导出视频 / 写入元数据四个动作、运行状态与日志，推荐顺序为「保存评审 → 验证对齐 → 构建数据集 → 导出视频」；运行结束后若弹窗已关闭，结果会以提示条告知。所有面板（数据目录 / 采集 / 流水线）都是居中弹窗，`Esc` 或点遮罩关闭。
+
 **删除会话**：会话列表每行右侧 `×` → 确认框显示大小/文件数/相机/评审状态 → 再选「永久删除」或「移入回收站」。默认**移入 `<数据根>/_trash`**（同盘瞬间完成、可恢复），可在「数据目录 → 回收站」逐条恢复或一键清空（清空才真正释放空间）；删除时会一并清掉该会话的预览缓存，录制中/流水线运行中不允许删除。
 
 python -m vlgp.review.process_session --session sessions/<session_name> --skip-review
