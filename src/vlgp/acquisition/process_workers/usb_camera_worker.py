@@ -18,6 +18,7 @@ import argparse
 import csv
 import ctypes
 import logging
+import os
 import queue
 import sys
 import threading
@@ -195,6 +196,43 @@ def writer_loop(
     logger.info('Writer thread finished (%d frames, %s)', written, out_dir)
 
 
+def _open_camera_with_retry(index: int, backend_name: str, backend: int,
+                            attempts: int, retry_s: float):
+    """Open the camera, retrying while the device is busy.
+
+    A single failed open is normal right after another process released the same
+    device (DirectShow frees the handle asynchronously), and some cameras need a
+    moment after enumeration. Previously ONE failure aborted the worker with exit
+    code 1 while the session kept running on its remaining sources — the operator
+    only saw the session "recording" with zero camera frames.
+    """
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        cap = None
+        # Log BEFORE the call: VideoCapture can block inside the driver when
+        # another process holds the device, and without this line a hang looks
+        # like "worker produced no output at all".
+        logger.info('Opening camera %d (attempt %d/%d, backend=%s)',
+                    index, attempt, attempts, backend_name)
+        try:
+            cap = cv2.VideoCapture(index, backend)
+        except Exception as e:                       # noqa: BLE001 — driver level
+            last_error = e
+        if cap is not None and cap.isOpened():
+            if attempt > 1:
+                logger.info('Camera %d opened on attempt %d/%d',
+                            index, attempt, attempts)
+            return cap
+        if cap is not None:
+            cap.release()
+        logger.warning('Camera %d did not open (attempt %d/%d, backend=%s)%s',
+                       index, attempt, attempts, backend_name,
+                       f': {last_error}' if last_error else '')
+        if attempt < attempts:
+            time.sleep(retry_s)
+    return None
+
+
 def main() -> None:
     _enable_high_resolution_timer()
     _set_process_priority_high()
@@ -225,6 +263,15 @@ def main() -> None:
     parser.add_argument('--warmup-s', type=float, default=1.5,
                         help='Seconds of frames to discard after opening the camera '
                              '(lets auto white balance / exposure converge)')
+    parser.add_argument('--open-attempts', type=int, default=20,
+                        help='How many times to retry opening the camera (1 s apart) '
+                             'before giving up. A device that another process just '
+                             'released (e.g. a preview grabbed right before the '
+                             'recording) needs a moment before it can be opened '
+                             'again, and a single failed attempt used to abort the '
+                             'whole recording.')
+    parser.add_argument('--open-retry-s', type=float, default=1.0,
+                        help='Delay between camera open attempts')
     parser.add_argument('--target-fps', type=float, default=None,
                         help='If set, do not touch CAP_PROP_FPS; keep frames on a '
                              'virtual 1/target_fps grid for an exact output rate')
@@ -257,6 +304,10 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    logger.info('Camera worker starting: index=%s backend=%s %sx%s out=%s '
+                'open_attempts=%s pid=%s',
+                args.index, args.backend, args.width, args.height, out_dir,
+                args.open_attempts, os.getpid())
     stop_path = out_dir / args.stop_file
     if stop_path.exists():
         stop_path.unlink()
@@ -264,9 +315,12 @@ def main() -> None:
     source_name = (args.source_name or args.topic).replace('/', '_')
     backend = resolve_backend(args.backend)
 
-    cap = cv2.VideoCapture(args.index, backend)
-    if not cap.isOpened():
-        logger.error('Cannot open camera index %d with backend %s', args.index, args.backend)
+    cap = _open_camera_with_retry(args.index, args.backend, backend,
+                                  max(1, int(args.open_attempts)),
+                                  float(args.open_retry_s))
+    if cap is None:
+        logger.error('Cannot open camera index %d with backend %s after %d attempts',
+                     args.index, args.backend, max(1, int(args.open_attempts)))
         sys.exit(1)
 
     # Minimise internal buffering so we get the freshest frame.

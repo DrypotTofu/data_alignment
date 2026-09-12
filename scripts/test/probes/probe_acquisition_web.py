@@ -287,7 +287,7 @@ def main() -> int:
                                   ensure_ascii=False)[:160])
     check('kill marks the job as errored', killed.get('state') == 'error')
     check('kill warns about incomplete data',
-          '非优雅' in (killed.get('error') or ''), str(killed.get('error'))[:100])
+          '数据尾部' in (killed.get('error') or ''), str(killed.get('error'))[:100])
 
     print('=== 6. cleanup ===')
     st, idle = req('GET', '/api/acquisition/status')

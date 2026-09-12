@@ -35,6 +35,16 @@ MARK_SESSION = '=== ACQ SESSION '
 MARK_STARTED = '=== ACQ RECORDING STARTED'
 MARK_STOPPED = '=== ACQ RECORDING STOPPED'
 MARK_DONE = '=== ACQ DONE '
+# Failure signatures inside the acquisition log: the session keeps running on
+# the remaining sources, so without surfacing these the operator sees
+# "recording" while a camera silently contributed zero frames.
+FAIL_PATTERNS = (
+    ('did not signal ready', '未就绪（相机打不开）'),
+    ('Cannot open camera', '打不开相机'),
+    ('exited with code', '进程异常退出'),
+    ('exited before signalling ready', '未就绪即退出'),
+    ('RuntimeError:', '运行错误'),
+)
 
 
 class AcquisitionJob:
@@ -62,6 +72,9 @@ class AcquisitionJob:
         self._last_size_at: float | None = None
         self._bytes_written = 0
         self._mb_per_s: float | None = None
+        self._samples: dict[str, int] = {}
+        self._camera_frames: dict[str, int] = {}
+        self._warnings: list[str] = []
         self._lock = threading.Lock()
         threading.Thread(target=self._watch, daemon=True,
                          name=f'acq-watch-{job_id}').start()
@@ -79,7 +92,7 @@ class AcquisitionJob:
         self._sample_size(force=True)
 
     def _sample_size(self, force: bool = False) -> None:
-        """Measure the session folder (bytes so far + smoothed MB/s)."""
+        """Measure the session folder (bytes so far + smoothed MB/s + frames)."""
         now = time.time()
         if not force and self._last_size_at is not None \
                 and now - self._last_size_at < SIZE_SAMPLE_S:
@@ -88,6 +101,7 @@ class AcquisitionJob:
         if d is None or not d.exists():
             return
         total = 0
+        cameras: dict[str, int] = {}
         stack = [d]
         while stack:
             try:
@@ -102,8 +116,27 @@ class AcquisitionJob:
                             continue
             except OSError:
                 continue
+        # per-camera frame counts: the acquisition's own [recording] counters
+        # read 0 for process cameras (the frames are written by the worker), so
+        # count the files it has produced — that is the "is the camera alive"
+        # signal the operator needs
+        try:
+            for e in os.scandir(d):
+                if e.is_dir(follow_symlinks=False) and e.name.startswith('camera_arm_'):
+                    n = 0
+                    try:
+                        with os.scandir(e.path) as files:
+                            for f in files:
+                                if f.name.endswith(('.png', '.jpg')):
+                                    n += 1
+                    except OSError:
+                        pass
+                    cameras[e.name] = n
+        except OSError:
+            pass
         with self._lock:
             self._bytes_written = total
+            self._camera_frames = cameras
             if self._last_size_at is not None and now > self._last_size_at:
                 dt = now - self._last_size_at
                 inst = (total - self._last_size) / dt / 1048576
@@ -121,7 +154,9 @@ class AcquisitionJob:
     def refresh(self) -> None:
         """Re-read the log markers and (throttled) re-measure the folder."""
         text = self._log_text()
-        starts = stops = 0
+        stops = 0
+        samples: dict[str, int] = {}
+        warnings: list[str] = []
         with self._lock:
             for line in text.splitlines():
                 if line.startswith(MARK_SESSION):
@@ -129,19 +164,40 @@ class AcquisitionJob:
                     if ' DIR ' in rest:
                         self.session_dir = Path(rest.rsplit(' DIR ', 1)[1].strip())
                 elif line.startswith(MARK_STARTED):
-                    starts += 1
                     if self.recording_at is None:
                         self.recording_at = time.time()
                         if self.state == 'starting':
                             self.state = 'recording'
                 elif line.startswith(MARK_STOPPED):
                     stops += 1
+                elif line.strip().startswith('[recording]'):
+                    # live per-source counters (printed every status interval) —
+                    # this is the ground truth that data is actually flowing,
+                    # independent of how much the writers have flushed to disk
+                    for tok in line.split()[1:]:
+                        if '=' in tok:
+                            k, _, v = tok.partition('=')
+                            try:
+                                samples[k] = int(v)
+                            except ValueError:
+                                continue
+                else:
+                    for needle, label in FAIL_PATTERNS:
+                        if needle in line:
+                            msg = f'{label}: {line.strip()[:160]}'
+                            if msg not in warnings:
+                                warnings.append(msg)
+                        if 'Worker ' in line and 'exited with code' in line:
+                            pass
             if stops and self.state == 'recording':
                 self.state = 'stopping'
             if self.state == 'starting' and self.exit_code is None \
                     and self.recording_at is None and 'No sources enabled' in text:
                 self.state = 'error'
                 self.error = '配置里没有启用的数据源'
+            self._samples = samples
+            # keep only the most recent few warnings
+            self._warnings = warnings[-4:]
         self._sample_size()
 
     # ------------------------------------------------------------------- api
@@ -160,10 +216,14 @@ class AcquisitionJob:
                 'recording': self.state == 'recording',
                 'bytes_written': self._bytes_written,
                 'gb_written': round(self._bytes_written / 1073741824, 3),
+                'mb_written': round(self._bytes_written / 1048576, 1),
+                'camera_frames': dict(self._camera_frames),
                 'mb_per_s': (round(self._mb_per_s, 2)
                              if self._mb_per_s is not None else None),
                 'gb_per_min': (round(self._mb_per_s * 60 / 1024, 2)
                                if self._mb_per_s is not None else None),
+                'samples': dict(self._samples),
+                'warnings': list(self._warnings),
                 'stdin_failsafe': self.stdin_failsafe,
                 'stop_file': str(self.stop_file),
                 'log': str(self.log_path),
@@ -197,7 +257,7 @@ class AcquisitionJob:
         if self.proc.poll() is None:
             self.proc.kill()
             with self._lock:
-                note = '已强制结束采集进程（非优雅停止，数据尾部可能不完整）'
+                note = '已强制结束采集进程（数据尾部可能不完整）'
                 self.error = f'{self.error}；{note}' if self.error else note
                 self.state = 'error'
             try:

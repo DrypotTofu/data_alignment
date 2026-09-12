@@ -107,6 +107,10 @@ class USBCameraProcessSource(DataSource):
 
         cmd = [
             sys.executable,
+            # -u: unbuffered, so the worker's diagnostics survive even when the
+            # process is terminated mid-handshake (block-buffered stderr used to
+            # vanish, leaving only "camera index N not opening" with no reason)
+            '-u',
             '-m',
             'vlgp.acquisition.process_workers.usb_camera_worker',
             '--index', str(self.config.camera_index),
@@ -138,6 +142,13 @@ class USBCameraProcessSource(DataSource):
             cmd += ['--duration', str(self.config.duration)]
         if self.config.warmup_s is not None:
             cmd += ['--warmup-s', str(self.config.warmup_s)]
+        # Camera open retries must FIT INSIDE the ready timeout, otherwise the
+        # parent gives up while the worker is still retrying (a just-released
+        # device needs a moment; one failed attempt used to kill the worker and
+        # silently lose every frame).
+        warmup = float(self.config.warmup_s or 0.0)
+        retries = max(1, int(self.config.ready_timeout - warmup - 2.0))
+        cmd += ['--open-attempts', str(retries)]
         if self.config.exposure is not None:
             cmd += ['--exposure', str(self.config.exposure)]
         if self.config.wb_temperature is not None:
@@ -152,11 +163,25 @@ class USBCameraProcessSource(DataSource):
             cmd += ['--saturation', str(self.config.saturation)]
 
         logger.info('Starting worker process for %s: %s', self.name, ' '.join(cmd))
-        # T13: package is pip-installed; worker runs via its vlgp module path,
-        # no manual PYTHONPATH needed. cwd is irrelevant for -m module launch.
+        # The worker's output goes to a FILE, never a pipe: a pipe is only read
+        # when the session stops, so a worker that hangs during the handshake
+        # contributed neither frames nor a single line of diagnostics. The file
+        # is also what the error paths below read from.
+        # stdin=DEVNULL on purpose — the worker never reads stdin, and inheriting
+        # the acquisition's stdin made camera initialisation fail on the rig
+        # (reproduced: with an inherited stdin pipe the worker never opened the
+        # camera and printed nothing).
+        self._worker_log = self._out_dir / 'worker.log'
+        try:
+            self._log_file = open(self._worker_log, 'w', encoding='utf-8')
+        except OSError:
+            self._worker_log = None
+            self._log_file = None
+        out_target = self._log_file if self._log_file is not None else subprocess.DEVNULL
         self._process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            stdout=out_target,
             stderr=subprocess.STDOUT,
             text=True,
             encoding='utf-8',
@@ -179,23 +204,21 @@ class USBCameraProcessSource(DataSource):
 
         exit_code: int | None = None
         try:
-            stdout, _ = self._process.communicate(timeout=timeout)
+            self._process.wait(timeout=timeout)
             exit_code = self._process.returncode
-            if stdout:
-                for line in stdout.strip().splitlines():
-                    logger.info('[worker %s] %s', self.name, line)
+            self._relay_worker_log()
         except subprocess.TimeoutExpired:
             logger.warning('Worker %s did not stop in time, terminating', self.name)
             self._process.terminate()
             try:
-                stdout, _ = self._process.communicate(timeout=2)
+                self._process.wait(timeout=2)
                 exit_code = self._process.returncode
-                if stdout:
-                    for line in stdout.strip().splitlines():
-                        logger.info('[worker %s] %s', self.name, line)
+                self._relay_worker_log()
             except subprocess.TimeoutExpired:
                 self._process.kill()
                 exit_code = -9
+        finally:
+            self._close_worker_log()
 
         # T12-P1-1: record a non-zero worker exit so the session.json exposes
         # a mid-session camera death instead of hiding it.
@@ -216,6 +239,28 @@ class USBCameraProcessSource(DataSource):
         """Non-zero if the worker died abnormally (T12-P1-1 observability)."""
         return getattr(self, '_worker_exit_code', None)
 
+    def _relay_worker_log(self, tail_lines: int = 40) -> None:
+        """Log the worker's own output (kept in <out_dir>/worker.log)."""
+        path = getattr(self, '_worker_log', None)
+        if path is None or not Path(path).exists():
+            return
+        try:
+            lines = Path(path).read_text(encoding='utf-8',
+                                         errors='replace').splitlines()
+        except OSError:
+            return
+        for line in lines[-tail_lines:]:
+            logger.info('[worker %s] %s', self.name, line)
+
+    def _close_worker_log(self) -> None:
+        f = getattr(self, '_log_file', None)
+        if f is not None:
+            try:
+                f.close()
+            except OSError:
+                pass
+            self._log_file = None
+
     def _wait_for_ready(self) -> None:
         """Block until the worker signals it has captured the first frame.
 
@@ -232,16 +277,40 @@ class USBCameraProcessSource(DataSource):
                 return
             if self._process is not None and self._process.poll() is not None:
                 code = self._process.returncode
-                stderr = self._process.stderr.read() if self._process.stderr else ''
+                self._close_worker_log()
                 raise RuntimeError(
                     f'Worker for {self.name} exited before signalling ready '
                     f'(exit code {code}). Camera index {self.config.camera_index} '
-                    f'failed to open or died during warm-up.\n{stderr[-800:]}')
+                    f'failed to open or died during warm-up.\n'
+                    f'{self._worker_log_tail()}')
             time.sleep(0.05)
+        # Timeout: report what the worker itself managed to say — without it the
+        # operator only sees "not opening", which hides busy-device/permission
+        # reasons that the worker already logged.
+        if self._process is not None:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+        self._close_worker_log()
         raise RuntimeError(
             f'Worker {self.name} did not signal ready within '
             f'{self.config.ready_timeout:.1f}s (camera index '
-            f'{self.config.camera_index} not opening)')
+            f'{self.config.camera_index} not opening).\n'
+            f'{self._worker_log_tail()}')
+
+    def _worker_log_tail(self, max_chars: int = 1200) -> str:
+        path = getattr(self, '_worker_log', None)
+        if path is None or not Path(path).exists():
+            return '(worker produced no output)'
+        try:
+            text = Path(path).read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            return '(worker log unreadable)'
+        if not text.strip():
+            return '(worker produced no output)'
+        return text[-max_chars:]
 
     def _read_frame_count(self) -> int:
         """Read the number of frames from the worker's metadata.csv."""

@@ -649,7 +649,7 @@ async function startRecording() {
 }
 
 async function stopRecording() {
-  if (!window.confirm('停止录制？（优雅停止：刷盘并写 session.json，需要几秒）')) return;
+  if (!window.confirm('确定停止录制？（刷盘并写 session.json，需要几秒）')) return;
   setAcqMsg('正在停止…');
   try {
     const out = await acqJson('/api/acquisition/stop', { method: 'POST' });
@@ -665,8 +665,8 @@ async function stopRecording() {
 }
 
 async function killRecording() {
-  if (!window.confirm('强制结束采集进程？\n\n这不是优雅停止：session.json 可能缺失、'
-    + 'CSV/图片流的尾部可能不完整。只有在“停止录制”长时间无响应时才使用。')) return;
+  if (!window.confirm('强制结束采集进程？\n\nsession.json 可能缺失、CSV/图片流尾部可能'
+    + '不完整。只有在“停止录制”长时间无响应时才使用。')) return;
   try {
     const out = await acqJson('/api/acquisition/kill', { method: 'POST' });
     setAcqMsg(`已强制结束（exit ${out.exit_code}）`, 'err');
@@ -701,12 +701,32 @@ async function pollAcq(immediate) {
     if (st.state === 'idle') {
       $('acq-live').textContent = '未开始';
     } else {
+      // small amounts in MB — "已写 0 GB" while 30 MB is on disk reads as broken
+      const written = st.bytes_written >= 1073741824
+        ? `${st.gb_written} GB` : `${st.mb_written} MB`;
+      const cams = st.camera_frames && Object.keys(st.camera_frames).length
+        ? ' · 帧 ' + Object.entries(st.camera_frames)
+          .map(([k, v]) => `${k.replace('camera_arm_', 'arm')}=${v}`).join(' ')
+        : '';
       $('acq-live').textContent =
-        `${st.state} · ${st.elapsed_s}s · 已写 ${st.gb_written} GB`
+        `${st.state} · ${st.elapsed_s}s · 已写 ${written}`
         + (st.mb_per_s !== null && st.mb_per_s !== undefined
           ? ` · ${st.mb_per_s} MB/s (${st.gb_per_min} GB/分钟)` : '')
-        + (st.stdin_failsafe ? '' : ' · [无 stdin 兜底]')
-        + (st.error ? ` · ${st.error}` : '');
+        + (st.state === 'starting' ? ' · 正在打开相机…' : '')
+        + cams
+        + (st.stdin_failsafe ? '' : ' · [无 stdin 兜底]');
+      const warn = $('acq-warn');
+      if (st.warnings && st.warnings.length) {
+        warn.hidden = false;
+        warn.textContent = '⚠ ' + st.warnings.join('  |  ');
+      } else {
+        warn.hidden = true;
+        warn.textContent = '';
+      }
+      if (st.error) {
+        warn.hidden = false;
+        warn.textContent = '⚠ ' + st.error;
+      }
       if (!$('acq-log').hidden) {
         const r = await fetch('/api/acquisition/log');
         if (r.ok) $('acq-log').textContent = await r.text();

@@ -229,16 +229,16 @@
             <button id="acq-start" class="mini primary">开始录制</button>
             <button id="acq-stop" class="mini" disabled>停止录制</button>
             <button id="acq-kill" class="mini danger" disabled
-                    title="强制结束：非优雅停止，数据尾部可能不完整">强制结束</button>
+                    title="强制结束：数据尾部可能不完整">强制结束</button>
             <button id="acq-log-btn" class="mini">日志</button>
           </div>
           <div id="acq-live" class="sub">未开始</div>
+          <div id="acq-warn" class="acq-warn" hidden></div>
           <pre id="acq-log" hidden></pre>
         </div>
       </div>
       <div class="dialog-foot">
         <span id="acq-msg" class="dialog-msg"></span>
-        <span class="sub">停止为优雅停止：刷盘 + 写 session.json</span>
       </div>
     </div>
   </div>
