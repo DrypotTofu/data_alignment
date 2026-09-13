@@ -72,6 +72,7 @@ const state = {
   acqPreflight: null,         // last preflight result (gates 开始录制)
   acqTimer: null,             // acquisition status poller
   acqWasRecording: false,     // true while a run is live (list refresh edge)
+  acqSuggestedName: '',       // last auto-generated session name (refresh rule)
   pipeOpen: false,            // pipeline dialog visibility
   trash: null,                // last /api/trash listing
   toastTimer: null,           // toast auto-hide handle
@@ -560,13 +561,27 @@ async function loadAcqConfigs() {
       sel.appendChild(o);
     }
     if (keep && state.acqConfigs.some((c) => c.path === keep)) sel.value = keep;
-    if (!$('acq-name').value) $('acq-name').value = data.suggested_name || '';
+    // Keep the session name at "now" on every open, unless the operator typed
+    // something of their own: the field used to be filled only when empty, so
+    // after the first recording it kept proposing the already-used old name.
+    const suggested = data.suggested_name || '';
+    const field = $('acq-name');
+    field.value = sessionNameFor(field.value, state.acqSuggestedName, suggested);
+    state.acqSuggestedName = suggested;
     renderAcqCameras();
     renderAcqTarget();
     setAcqState(data.status);
   } catch (e) {
     setAcqMsg('读取采集配置失败: ' + e.message, 'err');
   }
+}
+
+// Pure helper (unit-tested by scripts/test/probes/check_ui_logic.mjs): pick the
+// session name shown when the dialog opens.
+function sessionNameFor(previousValue, lastSuggested, suggested) {
+  const prev = (previousValue || '').trim();
+  const untouched = prev === '' || prev === (lastSuggested || '');
+  return untouched ? suggested : prev;
 }
 
 function currentAcqConfig() {
@@ -2000,7 +2015,9 @@ $('acq-name').oninput = renderAcqTarget;
 $('acq-name-gen').onclick = async () => {
   try {
     const d = await acqJson('/api/acquisition/configs');
-    $('acq-name').value = d.suggested_name || '';
+    const suggested = d.suggested_name || '';
+    $('acq-name').value = suggested;
+    state.acqSuggestedName = suggested;   // so the next open keeps refreshing it
     renderAcqTarget();
   } catch (e) { setAcqMsg('生成会话名失败: ' + e.message, 'err'); }
 };
