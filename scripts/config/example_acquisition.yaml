@@ -9,9 +9,9 @@ session_name: null  # null -> auto-generate from current UTC time
 clock_source: host_realtime
 clock_offset_ns: 0
 camera_bindings:
-  arm_1: 1
+  arm_1: 3
   arm_2: 0
-  arm_3: 3
+  arm_3: 1
 
 sources:
   # Endoscope / main view. `fps` selects the fast driver stream, while
