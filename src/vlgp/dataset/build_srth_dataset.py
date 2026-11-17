@@ -116,27 +116,33 @@ def slerp_quat(q0_xyzw: np.ndarray, q1_xyzw: np.ndarray, t: float) -> np.ndarray
     return (np.sin((1 - t) * theta) * q0 + np.sin(t * theta) * q1) / np.sin(theta)
 
 
-def relative_rot_6d(q0_wxyz: np.ndarray, q1_wxyz: np.ndarray) -> np.ndarray:
-    """6D action label from two consecutive PLC quaternions (wxyz).
+def relative_rotation(q0_wxyz: np.ndarray, q1_wxyz: np.ndarray) -> np.ndarray:
+    """R_rel = R(q0)^T @ R(q1) from two PLC quaternions (wxyz).
 
-    R_rel = R(q0)^T @ R(q1)  (= q0^-1 x q1, delta rotation expressed in the
-    current end-effector frame, SRT hybrid-relative-action convention; PM
-    decision 2026-08-23). Frame-invariant under constant base<->scope
-    rotations. Returns the first two columns concatenated as [g1; g2] with
-    g1 = R[:, 0], g2 = R[:, 1] (Zhou et al. 2019 convention), i.e. flat
-    [R00, R10, R20, R01, R11, R21].
+    Delta rotation expressed in the current end-effector frame (SRT
+    hybrid-relative-action convention; PM decision 2026-08-23), invariant
+    under any constant base<->scope rotation. Shared by ``relative_rot_6d``
+    and ``rotation_angle_deg`` so a quaternion pair is converted only once.
     """
     r0 = rotation_matrix(wxyz_to_xyzw(q0_wxyz))
     r1 = rotation_matrix(wxyz_to_xyzw(q1_wxyz))
-    rel = r0.T @ r1
+    return r0.T @ r1
+
+
+def relative_rot_6d(q0_wxyz: np.ndarray, q1_wxyz: np.ndarray) -> np.ndarray:
+    """6D action label from two consecutive PLC quaternions (wxyz).
+
+    Returns the first two columns of ``relative_rotation(q0, q1)`` concatenated
+    as [g1; g2] with g1 = R[:, 0], g2 = R[:, 1] (Zhou et al. 2019 convention),
+    i.e. flat [R00, R10, R20, R01, R11, R21].
+    """
+    rel = relative_rotation(q0_wxyz, q1_wxyz)
     return np.concatenate([rel[:, 0], rel[:, 1]])
 
 
 def rotation_angle_deg(q0_wxyz: np.ndarray, q1_wxyz: np.ndarray) -> float:
     """Angle of the relative rotation R(q0)^T @ R(q1), in degrees."""
-    r0 = rotation_matrix(wxyz_to_xyzw(q0_wxyz))
-    r1 = rotation_matrix(wxyz_to_xyzw(q1_wxyz))
-    rel = r0.T @ r1
+    rel = relative_rotation(q0_wxyz, q1_wxyz)
     cos_theta = float(np.clip((np.trace(rel) - 1.0) / 2.0, -1.0, 1.0))
     return float(np.degrees(np.arccos(cos_theta)))
 
@@ -240,10 +246,14 @@ def compute_actions(align: pd.DataFrame) -> pd.DataFrame:
             row[f'arm{a}_delta_pos_x'] = dpos[0]
             row[f'arm{a}_delta_pos_y'] = dpos[1]
             row[f'arm{a}_delta_pos_z'] = dpos[2]
-            six = relative_rot_6d(quats[a][i], quats[a][i + 1])
+            # One R_rel per quaternion pair: both the 6D label and the angle
+            # are derived from it (previously converted the pair twice).
+            rel = relative_rotation(quats[a][i], quats[a][i + 1])
+            six = np.concatenate([rel[:, 0], rel[:, 1]])
             for k in range(6):
                 row[f'arm{a}_delta_rot_6d_{k}'] = six[k]
-            row[f'arm{a}_rot_angle_deg'] = rotation_angle_deg(quats[a][i], quats[a][i + 1])
+            cos_theta = float(np.clip((np.trace(rel) - 1.0) / 2.0, -1.0, 1.0))
+            row[f'arm{a}_rot_angle_deg'] = float(np.degrees(np.arccos(cos_theta)))
         rows.append(row)
 
     return pd.DataFrame(rows)

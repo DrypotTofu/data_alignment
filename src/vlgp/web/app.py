@@ -74,11 +74,15 @@ DEFAULT_PORT = 8765
 # scripts/tools/start_manual_acquisition.bat passes to manual_acquisition.py;
 # example_acquisition.yaml is the default --config of scripts/run_acquisition.py;
 # arm2_only.yaml is the endoscope-only variant used while the wrist cameras are
-# not connected. base_dir / camera_bindings writes are kept in sync across them
-# (housekeeping rule: these must not drift apart).
+# not connected. HWS configs select the capture card's device timestamps;
+# hws_dual_60fps.yaml is the verified dual-channel 720p60 configuration.
+# base_dir / camera_bindings writes are kept in sync across them (housekeeping
+# rule: these must not drift apart).
 ACQ_CONFIGS = (REPO_ROOT / 'scripts' / 'config' / 'default.yaml',
                REPO_ROOT / 'scripts' / 'config' / 'example_acquisition.yaml',
-               REPO_ROOT / 'scripts' / 'config' / 'arm2_only.yaml')
+               REPO_ROOT / 'scripts' / 'config' / 'arm2_only.yaml',
+               REPO_ROOT / 'scripts' / 'config' / 'hws_endoscope.yaml',
+               REPO_ROOT / 'scripts' / 'config' / 'hws_dual_60fps.yaml')
 ACQ_LAUNCHER = REPO_ROOT / 'scripts' / 'tools' / 'start_manual_acquisition.bat'
 ACQ_STOP_DIR = REPO_ROOT / 'var' / 'web_acq'
 # Single-process deployment assumption (CODE_REVIEW_20260830 三.8): the
@@ -220,11 +224,6 @@ def create_app(index: SessionIndex | None = None,
         (preload encoding / pipeline subprocesses) — those paths were resolved
         against the old root."""
         busy = _busy_reason()
-        if busy:
-            raise HTTPException(409, {
-                'busy': busy,
-                'message': '有后台任务正在运行，请等待完成后再切换数据目录：'
-                           + '；'.join(busy)})
         if busy:
             raise HTTPException(409, {
                 'busy': busy,
@@ -533,10 +532,11 @@ def create_app(index: SessionIndex | None = None,
         mode=permanent frees the space immediately and cannot be undone."""
         if mode not in ('trash', 'permanent'):
             raise HTTPException(422, {'error': f'unknown mode {mode!r}'})
-        if _busy_reason():
-            raise HTTPException(409, {'busy': _busy_reason(),
+        busy = _busy_reason()
+        if busy:
+            raise HTTPException(409, {'busy': busy,
                                       'message': '有后台任务在运行：'
-                                                 + '；'.join(_busy_reason())})
+                                                 + '；'.join(busy)})
         try:
             return delete_session(index, name, permanent=(mode == 'permanent'),
                                  confirm=confirm)

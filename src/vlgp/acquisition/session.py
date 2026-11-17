@@ -246,12 +246,10 @@ class AcquisitionSession:
 
         logger.info('Stopping session %s...', self.session_name)
 
-        # Signal main-thread sources. Their acquisition loop checks the stop
-        # event between frames. We do not join them here because they run in
-        # the main thread that is calling this method (typically via Ctrl-C).
-        for source in self._main_thread_sources.values():
-            if source.is_running:
-                logger.info('Signaling main-thread source %s to stop', source.name)
+        # Main-thread sources observe the same stop event through their own
+        # acquisition loop (checked between frames). We do not join them here
+        # because they run in the main thread that is calling this method
+        # (typically via Ctrl-C); nothing else is required for them.
 
         # Stop background sources FIRST so all in-flight samples are enqueued
         # before the writer is told to exit. Setting _stop_event before this

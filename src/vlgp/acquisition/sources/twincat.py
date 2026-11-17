@@ -57,10 +57,12 @@ from typing import Any
 
 import pyads
 
+from ..ads_compat import ensure_ads_core_loaded
 from ..base_source import DataSample, DataSource
 from ..timestamp import TimestampSource, UnifiedTimestamp
 
 logger = logging.getLogger(__name__)
+ensure_ads_core_loaded()
 
 
 def _reshape(flat: list[Any], shape: tuple[int, ...]) -> list[Any]:
@@ -191,6 +193,12 @@ class TwinCATSource(DataSource):
         self._lock = threading.Lock()
         self._worker_threads: list[threading.Thread] = []
         self._connections: list[pyads.Connection] = []
+        # Symbol presence is fixed for the whole run: compute once instead of
+        # rebuilding the map for every sample (300 Hz x 4 arms).
+        self._has = {k: k in self.config.symbols for k in [
+            'joint_angles', 'armframe_positions', 'scopeframe_positions',
+            'orientations', 'instrument_types',
+            'gripper_angle', 'gripper_signal', 'energy_instrument_status']}
 
     @property
     def name(self) -> str:
@@ -286,10 +294,7 @@ class TwinCATSource(DataSource):
         if arm_idx is None:
             arm_idx = self.config.selected_arm - 1
         arm_id = arm_idx + 1
-        has = {k: k in arrays for k in [
-            'joint_angles', 'armframe_positions', 'scopeframe_positions',
-            'orientations', 'instrument_types',
-            'gripper_angle', 'gripper_signal', 'energy_instrument_status']}
+        has = self._has
 
         rtt_ns = t_recv_ns - t_send_ns
         # Raw PC wall time at response arrival. Kept raw in metadata so post-
@@ -645,21 +650,15 @@ class TwinCATWriter:
 
     def write(self, sample: DataSample) -> None:
         data = sample.data
+        # Build the row once, in final column order: per-sample metadata fields
+        # first, then the pose/joint/gripper data columns.
         row = {'timestamp_ns': sample.timestamp_ns}
         for k in TWINCAT_ROW_COLUMNS:
             if k == 'timestamp_ns':
                 continue
             if k in sample.metadata:
                 row[k] = sample.metadata[k]
-        row.update(data)  # pose/joint/gripper columns follow the per-sample fields
-        # Fix the row column order: per-sample fields first, then data columns.
-        ordered = {'timestamp_ns': row['timestamp_ns']}
-        for k in TWINCAT_ROW_COLUMNS:
-            if k != 'timestamp_ns' and k in row:
-                ordered[k] = row[k]
-        for k, v in data.items():
-            ordered[k] = v
-        row = ordered
+        row.update(data)
 
         if self._row_fieldnames is None:
             self._row_fieldnames = list(row.keys())

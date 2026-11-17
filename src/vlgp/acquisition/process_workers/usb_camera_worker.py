@@ -158,6 +158,10 @@ def writer_loop(
 ) -> None:
     """Consume frames from the queue and write them to disk.
 
+    Queue items are ``(frame_idx, timestamp_ns, pc_arrival_ns, frame, *extras)``;
+    any extra values are appended to the metadata row (the HWS worker uses this
+    for the capture card's device timestamp and frame index).
+
     Multiple writer threads may share the same queue and metadata writer;
     metadata rows may then be slightly out of frame order (each row carries
     the frame index and timestamp, and downstream tools sort by timestamp).
@@ -168,7 +172,7 @@ def writer_loop(
     written = 0
     while True:
         try:
-            frame_idx, timestamp_ns, pc_arrival_ns, frame = frame_queue.get(timeout=0.1)
+            frame_idx, timestamp_ns, pc_arrival_ns, frame, *extras = frame_queue.get(timeout=0.1)
         except queue.Empty:
             if stop_event.is_set() and frame_queue.empty():
                 break
@@ -189,7 +193,7 @@ def writer_loop(
         with meta_lock:
             meta_writer.writerow([
                 frame_idx, timestamp_ns, pc_arrival_ns,
-                beijing_str, filename, actual_w, actual_h,
+                beijing_str, filename, actual_w, actual_h, *extras,
             ])
         written += 1
 

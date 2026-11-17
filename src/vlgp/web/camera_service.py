@@ -55,7 +55,8 @@ FULL_RIG_PIXELS = 1280 * 720 + 2 * (640 * 480)
 DEFAULT_ROWS_PER_S = 30.0
 EST_GB_PER_MINUTE = round(EST_MB_PER_ROW_FULL_RIG * DEFAULT_ROWS_PER_S * 60 / 1024, 2)  # 3.16 (legacy constant)
 DEFAULT_RESERVE_MINUTES = 20.0
-CAMERA_SOURCE_TYPES = {'process_camera', 'usb_camera', 'endoscope'}
+CAMERA_SOURCE_TYPES = {'process_camera', 'hws_camera_process',
+                       'usb_camera', 'endoscope'}
 GB = 1024 ** 3
 
 
@@ -94,8 +95,12 @@ def preview_jpeg(index: int, width: int = PREVIEW_MAX_W,
     that to 422 with the message shown in the UI.
     """
     t0 = time.perf_counter()
-    frame = camera_probe.grab_frame(int(index), int(width), int(height), backend,
-                                    fourcc=fourcc)
+    if backend == 'hws_sdk':
+        from vlgp.acquisition.process_workers.hws_capture import grab_frame
+        frame = grab_frame(int(index), int(width), int(height))
+    else:
+        frame = camera_probe.grab_frame(int(index), int(width), int(height), backend,
+                                        fourcc=fourcc)
     if frame is None:
         raise RuntimeError(
             f'index {index} 打不开或取不到帧（可能被其他程序占用，或不是相机）')
@@ -130,11 +135,13 @@ def config_cameras(path: str | Path) -> dict:
             continue
         out['cameras'].append({
             'name': source.get('name') or source.get('type'),
+            'type': source.get('type'),
             'arm_id': source.get('arm_id'),
             'camera_index': source.get('camera_index'),
             'width': source.get('width'), 'height': source.get('height'),
             'fps': source.get('fps'), 'target_fps': source.get('target_fps'),
             'fourcc': source.get('fourcc'), 'backend': source.get('backend'),
+            'sdk_dll': source.get('sdk_dll'),
             'image_format': source.get('image_format'),
             'enabled': source.get('enabled') is not False,
         })
@@ -221,6 +228,8 @@ def _robot_check(source: dict, timeout_s: float = 5.0) -> dict:
               or 'MAIN.MonitorTask')
     try:
         import pyads
+        from vlgp.acquisition.ads_compat import ensure_ads_core_loaded
+        ensure_ads_core_loaded()
     except ImportError as e:                     # pragma: no cover
         return {'ok': False, 'detail': f'pyads 不可用: {e}'}
     t0 = time.perf_counter()
@@ -357,11 +366,19 @@ def preflight(config_path: str | Path, reserve_minutes: float = DEFAULT_RESERVE_
             if index is None:
                 bad.append(f"{cam.get('name')}: 未绑定 index")
                 continue
-            frame = camera_probe.grab_frame(int(index),
-                                            int(cam.get('width') or 640),
-                                            int(cam.get('height') or 480),
-                                            cam.get('backend') or 'dshow',
-                                            fourcc=cam.get('fourcc'))
+            if cam.get('type') == 'hws_camera_process':
+                from vlgp.acquisition.process_workers.hws_capture import grab_frame
+                frame = grab_frame(int(index),
+                                   int(cam.get('width') or 1280),
+                                   int(cam.get('height') or 720),
+                                   int(cam.get('fps') or 60),
+                                   dll_path=cam.get('sdk_dll'))
+            else:
+                frame = camera_probe.grab_frame(int(index),
+                                                int(cam.get('width') or 640),
+                                                int(cam.get('height') or 480),
+                                                cam.get('backend') or 'dshow',
+                                                fourcc=cam.get('fourcc'))
             if frame is None:
                 bad.append(f"{cam.get('name')} (index {index}): 打不开/取不到帧")
             else:

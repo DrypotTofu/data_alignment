@@ -93,7 +93,7 @@ def validate_session_config(config: SessionConfig) -> None:
             else:
                 arm_ids[arm_id] = label
 
-        if kind in {'usb_camera', 'process_camera'}:
+        if kind in {'usb_camera', 'process_camera', 'hws_camera_process'}:
             camera_index = source_cfg.get('camera_index')
             if not isinstance(camera_index, int) or camera_index < 0:
                 errors.append(f'{label}: camera_index must be a non-negative integer')
@@ -121,6 +121,11 @@ def validate_session_config(config: SessionConfig) -> None:
             writer_threads = source_cfg.get('writer_threads', 1)
             if not isinstance(writer_threads, int) or writer_threads < 1:
                 errors.append(f'{label}: writer_threads must be a positive integer')
+
+            if kind == 'hws_camera_process':
+                buffer_count = source_cfg.get('buffer_count', 4)
+                if not isinstance(buffer_count, int) or buffer_count < 1:
+                    errors.append(f'{label}: buffer_count must be a positive integer')
 
         if kind == 'twincat':
             selected_arm = source_cfg.get('selected_arm', 1)

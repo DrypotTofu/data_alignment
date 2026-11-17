@@ -1,115 +1,326 @@
-# VLGP TwinCAT ADS 链路修复说明（2026-08-17）
+# TwinCAT ADS 排障手册
 
-**日期**：2026-08-17
-**文档性质**：专题说明。记录「采集机重装 Windows 后 TwinCAT/ADS 链路断裂」的故障现象、诊断方法、最终修复配置与验证结果。主状态文档仍为 `VLGP_项目状态与技术备忘_20260816.md`。
+> 用途：VLGP 数据采集电脑的安装、迁移和 ADS 故障排查。
+> 更新：2026-11-16。本文保留 2026-08-17 的链路修复经验，并新增 `AdsDll.dll` 预加载问题的完整定位与修复记录。
+> 原则：先做只读检查，不随意重启 TwinCAT、不修改路由、不更改 PLC 状态；涉及机器人控制器的操作必须经现场人员确认。
 
----
+## 1. 当前项目的标准连接参数
 
-## 1. 故障背景
+以下是 **2026-11-16 实测值**。迁移到其他电脑时，本机地址必须替换，机器人侧参数通常不变。
 
-数据采集用 PC（本机，当前 IP `192.168.22.100`）重装 Windows 系统后，TwinCAT 安装损坏，无法读取机器人 PC（`192.168.22.22`，PLC 端口 851）中的采集变量。具体表现为：
+| 项目 | 当前值 | 说明 |
+|---|---|---|
+| 机器人名称 | `RobotController` | TwinCAT Target Browser 中可见 |
+| 机器人 IP | `192.168.22.22` | 机器人控制器 |
+| 机器人 AMS Net ID | `169.254.226.99.1.1` | 实测有效，不要改成 `192.168.22.22.1.1` |
+| PLC ADS 端口 | `851` | 这是 **AMS 端口**，不是 TCP 851 监听端口 |
+| 采集机 IP | `192.168.22.100` | 新电脑应设置自己的固定地址 |
+| 采集机 AMS Net ID | `192.168.22.100.1.1` | 当前注册表实测值 |
+| ADS Router TCP/UDP | `48898` | 网络排障应检查此端口 |
+| TwinCAT | `3.1.4024.79` | 当前采集机版本 |
+| Python | 64 位 Python 3.11 | 当前 conda 环境为 `SurgDataColl` |
+| pyads | `3.6.0` | 当前实测版本 |
 
-1. 本机 `TcSysSrv`（TwinCAT3 System Service，AMS 路由器）服务**未注册**（`sc.exe query TcSysSrv` 返回 1060），`C:\TwinCAT` 只剩部分文件；
-2. 本机 `C:\TwinCAT\3.1\Target\StaticRoutes.xml` 被清空（指向机器人的静态路由丢失）；
-3. pyads `plc.open()` 报 `RuntimeError: Failed to open port on AMS router`。
+历史文档中出现过本机 Net ID `192.10.100.251.1.1` 和 TwinCAT `3.1.4024.75`，它们是 **2026-08-17 的旧配置**，迁移时不要直接照搬。
 
-## 2. 诊断过程与关键结论
+## 2. 正常状态与快速验证
 
-### 2.1 网络层
+### 2.1 正常状态
 
-- ping `192.168.22.22` 正常（~3 ms）；TCP 48898（ADS）端口开放。
-- 网络层无问题，故障在 AMS 路由层。
+- `TwinCAT3 System Service`（服务名 `TcSysSrv`）正在运行。
+- 本机 AMS Net ID 已配置。
+- 本机与机器人具有正确的双向静态路由。
+- `pyads.Connection(...).open()` 成功。
+- `read_state()` 可返回控制器状态；`(5, 0)` 表示 Run。
+- PLC 符号能够读取，例如 `Sir_RunRunShaw_Database.Joint_Angles` 应返回 48 个 LREAL。
 
-### 2.2 本机 AMS 路由器
+Config 模式不妨碍建立 ADS 连接和读取状态；需要实时 PLC 数据时，再确认 PLC 程序和符号已加载并运行。
 
-- pyads 在 Windows 上**必须**通过本机 AMS 路由器（TcSysSrv）转发报文；路由器不工作则 pyads 必然失败。修复 TwinCAT 安装使 `TcSysSrv` 恢复运行后，报错变为 `ADSError(7)`（target machine not found，本地缺路由）。
+### 2.2 使用项目修复后的快速测试
 
-### 2.3 双向路由缺一不可
+在项目根目录打开 PowerShell：
 
-ADS over TCP 要求**两侧路由表互相认识**：
+```powershell
+$env:TWINCAT3DIR = 'C:\TwinCAT\3.1\'
 
-- 本机侧：`StaticRoutes.xml` 需要「机器人 NetID → 192.168.22.22」条目；pyads 的 `add_route()` 在 Windows 上不可用（报 "Router interface is not available on Win32 systems"），只能编辑 `StaticRoutes.xml` 后**重启 TcSysSrv 生效**。
-- 机器人侧：机器人路由表按「NetID + IP」校验来源；本机重装后 NetID 未变（注册表保留：`HKLM\SOFTWARE\WOW6432Node\Beckhoff\TwinCAT3\System` 的 `AmsNetId` = **192.10.100.251.1.1**，注意与本机当前 IP 192.168.22.100 不对应），但机器人路由表中该 NetID 登记的 IP 是旧地址，导致：
-  - 用错误源 NetID 连接 → 机器人**立即 RST**（路由表无此 NetID）；
-  - 用正确源 NetID 连接 → 连接被接受但**响应超时**（回包按路由表发往旧 IP）。
-
-### 2.4 机器人 NetID 确认
-
-- 修复双向路由后实测：`169.254.226.99.1.1` 可连接（PLC Run 模式），`192.168.22.22.1.1` 被拒（`ADSError(1861)`）。
-- **机器人真实 NetID 仍是 `169.254.226.99.1.1`**，与 `scripts/config/default.yaml` 中配置一致，采集配置无需修改。
-
-### 2.5 原生 ADS/TCP 探测方法（备用手段）
-
-当本机路由器不可用或需要区分「本机故障 / 路由故障 / PLC 故障」时，可用裸 socket 直连 `48898` 手工构造 AMS/TCP 报文（2 字节保留 + 4 字节长度 + 32 字节 AMS 头 + 数据）：
-
-- ReadState（cmd=4）探测目标端口是否注册；
-- ReadWrite（cmd=9, IndexGroup `0xF003`）按名取符号句柄；Read（cmd=2, IndexGroup `0xF005`）读值；cmd=6（`0xF006`）释放句柄。
-
-机器人路由器对不可达目标的错误响应特征：header error=0x7、payload 为空、source 字段镜像为请求的目标地址。
-
-## 3. 最终修复配置（已生效，勿随意改动）
-
-### 3.1 本机（采集 PC，192.168.22.100）
-
-- TwinCAT 3.1.4024.75，`TcSysSrv` 服务运行中（Automatic）。
-- 本机 AMS NetID：`192.10.100.251.1.1`（重装系统后注册表保留，未变）。
-- `C:\TwinCAT\3.1\Target\StaticRoutes.xml`：
-
-```xml
-<RemoteConnections>
-	<Route>
-		<Name>RobotController</Name>
-		<Address>192.168.22.22</Address>
-		<NetId>169.254.226.99.1.1</NetId>
-		<Type>TCP_IP</Type>
-		<Flags>0</Flags>
-	</Route>
-	<Route>
-		<Name>RobotController_Alt</Name>   <!-- 备用候选，实测无效，可删除 -->
-		<Address>192.168.22.22</Address>
-		<NetId>192.168.22.22.1.1</NetId>
-		<Type>TCP_IP</Type>
-		<Flags>0</Flags>
-	</Route>
-</RemoteConnections>
+& 'D:\ProgramFiles\miniconda3\envs\SurgDataColl\python.exe' -c "from vlgp.acquisition.ads_compat import ensure_ads_core_loaded; ensure_ads_core_loaded(); import pyads; c=pyads.Connection('169.254.226.99.1.1',851,'192.168.22.22'); c.open(); print('OPEN OK',c.get_local_address()); print('STATE',c.read_state()); c.close()"
 ```
 
-### 3.2 机器人侧（192.168.22.22）
+迁移后 Python 路径不同，应替换为本机解释器路径。
 
-`C:\TwinCAT\3.1\Target\StaticRoutes.xml` 新增（机器人工程师操作，改后需重启机器人侧 TcSysSrv / TwinCAT）：
+完整变量读取测试：
+
+```python
+from vlgp.acquisition.ads_compat import ensure_ads_core_loaded
+ensure_ads_core_loaded()
+
+import pyads
+
+plc = pyads.Connection('169.254.226.99.1.1', 851, '192.168.22.22')
+try:
+    plc.open()
+    print('本地地址：', plc.get_local_address())
+    print('ADS 状态：', plc.read_state())
+    values = plc.read_by_name(
+        'Sir_RunRunShaw_Database.Joint_Angles',
+        pyads.PLCTYPE_ARR_REAL(48),
+    )
+    print('Joint_Angles 数量：', len(values))
+finally:
+    plc.close()
+```
+
+## 3. 分层排查流程
+
+按以下顺序定位，不要一开始就修改路由或重装 TwinCAT。
+
+### 第一层：确认错误发生在哪一段
+
+| 现象 | 故障层 |
+|---|---|
+| `Failed to open port on AMS router` | 本机 ADS DLL／本机 Router，尚未访问远端 |
+| 能 open，但 `ADSError(7)` | 本机到目标的路由缺失或目标不可达 |
+| GUI 可浏览远端，但新 Python 客户端不能 open | GUI 可能是已有连接；继续检查本机新端口注册 |
+| open/read_state 正常，但符号读取失败 | PLC 符号、数据类型或 PLC 运行状态 |
+| 能连接但响应超时 | 双向路由、远端回包地址或防火墙 |
+
+注意：TwinCAT GUI 能打开 `RobotController`，只能证明该 GUI 连接和远端 ADS 可用，**不能证明本机所有新客户端都能正常注册 AMS 端口**。
+
+### 第二层：只读检查本机服务和端口
+
+```powershell
+Get-Service -Name TcSysSrv
+Get-NetTCPConnection -LocalPort 48898 -ErrorAction SilentlyContinue
+```
+
+正常时服务为 `Running`，48898 的监听进程应为 `TCATSysSrv.exe`。
+
+如果服务未注册或无法运行，再检查 TwinCAT 安装。不要仅凭 `Failed to open port` 就认定服务未运行：2026-11-16 的案例中，服务和端口均正常，但 DLL 依赖加载失败。
+
+### 第三层：检查本机 AMS Net ID
+
+```powershell
+$v = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Beckhoff\TwinCAT3\System').AmsNetId
+$v -join '.'
+```
+
+当前应得到：
+
+```text
+192.168.22.100.1.1
+```
+
+如果更换了 IP、网卡或 AMS Net ID，必须同步检查机器人侧静态路由。
+
+### 第四层：检查网络
+
+```powershell
+ping 192.168.22.22
+Test-NetConnection 192.168.22.22 -Port 48898
+```
+
+不要用 `Test-NetConnection 192.168.22.22 -Port 851` 判断 PLC 是否在线，因为 **851 是 AMS 逻辑端口，不是 TCP 监听端口**。
+
+## 4. 专题：AdsPortOpenEx 返回 Win32 错误 126
+
+### 4.1 故障现象
+
+2026-11-16 出现：
+
+```text
+RuntimeError: Failed to open port on AMS router.
+```
+
+同时满足：
+
+- `TcSysSrv` 正常运行并监听 48898；
+- 本机 AMS Net ID 正确；
+- 32 位和 64 位原生 ADS 客户端都返回 `AdsPortOpenEx=0`；
+- 32／64 位 `TcAdsDll.dll` 均为 `2.11.0.45`，数字签名有效；
+- 重启服务和电脑均不能恢复；
+- TwinCAT GUI 可以连接 RobotController。
+
+### 4.2 定位方法
+
+直接调用 64 位 DLL，并在调用前清除旧错误码：
+
+```python
+import ctypes
+
+dll = ctypes.WinDLL(
+    r'C:\TwinCAT\Common64\TcAdsDll.dll',
+    use_last_error=True,
+)
+dll.AdsPortOpenEx.restype = ctypes.c_long
+ctypes.set_last_error(0)
+port = dll.AdsPortOpenEx()
+print('port =', port)
+print('Win32 error =', ctypes.get_last_error())
+```
+
+本案例得到：
+
+```text
+port = 0
+Win32 error = 126
+```
+
+`126` 表示“找不到指定模块”。随后通过逐项预加载组件确认：**预先加载 `AdsDll.dll` 后，ADS 立即恢复**。
+
+```python
+import ctypes
+
+# 必须在进程中保留该句柄，不能让它被垃圾回收。
+_ads_core = ctypes.WinDLL(r'C:\TwinCAT\Common64\AdsDll.dll')
+
+import pyads
+plc = pyads.Connection('169.254.226.99.1.1', 851, '192.168.22.22')
+plc.open()
+print(plc.get_local_address())
+print(plc.read_state())
+plc.close()
+```
+
+### 4.3 项目中的正式修复
+
+已新增：
+
+```text
+src/vlgp/acquisition/ads_compat.py
+```
+
+统一入口：
+
+```python
+from vlgp.acquisition.ads_compat import ensure_ads_core_loaded
+ensure_ads_core_loaded()
+```
+
+该函数根据 `pyads.pyads_ex.dll_path` 找到同目录的 `AdsDll.dll`，每个进程只加载一次。已接入：
+
+- `src/vlgp/acquisition/sources/twincat.py`
+- `src/vlgp/web/camera_service.py` 的机器人链路自检
+
+优点：
+
+- 不修改系统 PATH 或 DLL 搜索路径；
+- 不复制、覆盖系统 DLL；
+- 不修改 TwinCAT 服务和 ADS 路由；
+- 后续迁移时随项目代码一起迁移。
+
+### 4.4 本案例的验证结果
+
+- 项目 ADS open 成功；
+- 本地地址为 `192.168.22.100.1.1:<动态 AMS 端口>`；
+- `read_state() = (5, 0)`；
+- 成功读取 `Joint_Angles` 的 48 个数值；
+- Web 机器人链路自检通过，读取约 9 ms。
+
+### 4.5 明确排除的方向
+
+本案例不需要：
+
+- 关闭 Hyper-V；已有历史测试证明 Hyper-V 开关不影响此 ADS 连接；
+- 重装或降级 `pyads`；
+- 更换 32／64 位 Python；
+- 修改机器人 AMS Net ID；
+- 重建远端路由；
+- 仅因 Real-time 日志中的 Hyper-V 报错而修复 ADS。
+
+## 5. 迁移到新电脑的步骤
+
+### 5.1 安装和基础配置
+
+1. 安装与现有系统兼容的 TwinCAT 3.1。
+2. 安装 64 位 Python 和项目依赖。
+3. 设置采集机固定 IP，避免 DHCP 改变地址。
+4. 确认 `TcSysSrv` 已注册并能正常运行。
+5. 确认本机 AMS Net ID，记录下来。
+6. 保留项目中的 `ads_compat.py` 修复。
+
+### 5.2 配置双向静态路由
+
+本机文件：
+
+```text
+C:\TwinCAT\3.1\Target\StaticRoutes.xml
+```
+
+本机到机器人条目模板：
 
 ```xml
 <Route>
-	<Name>CollectionPC</Name>
-	<Address>192.168.22.100</Address>
-	<NetId>192.10.100.251.1.1</NetId>
-	<Type>TCP_IP</Type>
-	<Flags>0</Flags>
+    <Name>RobotController</Name>
+    <Address>192.168.22.22</Address>
+    <NetId>169.254.226.99.1.1</NetId>
+    <Type>TCP_IP</Type>
+    <Flags>0</Flags>
 </Route>
 ```
 
-**注意**：若采集机 IP 或 NetID 以后再次变化（重装、换网卡、DHCP 变动），必须同步更新机器人侧这一条目，否则会出现「连接被接受但读不到数据」的症状。
+机器人侧必须有指向采集机的条目：
 
-## 4. 验证结果（2026-08-17 实测）
+```xml
+<Route>
+    <Name>CollectionPC</Name>
+    <Address>新采集机IP</Address>
+    <NetId>新采集机AMS Net ID</NetId>
+    <Type>TCP_IP</Type>
+    <Flags>0</Flags>
+</Route>
+```
 
-- `pyads.Connection('169.254.226.99.1.1', 851, '192.168.22.22')` open 成功，`read_state() = (5, 0)`（**PLC Run 模式**，原 T0 阻塞的 RTIME 4132 问题随系统重装一并解决）。
-- 8 类采集符号（`Sir_RunRunShaw_Database.*`）全部读通，数值量级合理（关节角度数、位姿 mm、四元数模长≈1、`instrument_types=[4,13,2,7]`、gripper 近 0、能量全 False）。
-- `TwinCAT_SystemInfoVarList._TaskInfo[1].CycleCount/CycleTime` 可读，CycleTime=10000（×100 ns = 1 ms，1 kHz 任务），`timestamp_mode: twincat` 依赖的时间轴符号正常。
-- 10 秒全符号连续轮询：**290.7 Hz，0 错误**，轮询间隔均值 3.44 ms / 最大 5.91 ms，每次读取值均变化（实时数据）。与文档记载的 320–340 Hz 同一量级，满足 `default.yaml` 采集需求。
+注意：
 
-## 5. 常见错误码速查（本次实测遇到）
+- 两侧路由缺一不可；
+- `NetId + IP` 必须一致；
+- Windows 上不要依赖 `pyads.add_route()`，历史实测会提示 Router interface 不可用；
+- 修改静态路由后是否重启 TwinCAT，应按现场维护流程执行；
+- 机器人侧操作必须经机器人工程师确认，并确保机械臂安全。
 
-| 报错 | 含义 | 排查方向 |
-|---|---|---|
-| `Failed to open port on AMS router` | 本机 AMS 路由器不工作 | TcSysSrv 服务是否注册/运行 |
-| `ADSError(7)` target machine not found | 本机缺到目标的路由 | 本机 StaticRoutes.xml + 重启 TcSysSrv |
-| `ADSError(18)` port disabled | 本机路由器到对端连接失败/被禁用 | 对端路由表是否认可本机 NetID+IP；必要时清理重复路由并重启本机 TcSysSrv |
-| `ADSError(1861)` (0x745) | 对端路由器拒绝：NetID 不存在 | 目标 NetID 写错；用正确 NetID |
-| 原生 TCP 连接被 RST | 对端路由表无此源 NetID | 机器人侧加/改路由 |
-| 原生 TCP 超时无响应 | 源 NetID 被认可但回包发往旧 IP | 机器人侧路由条目 IP 是否为本机当前 IP |
+### 5.3 防火墙
 
-## 6. 后续事项
+确保 TwinCAT Router 的 ADS 通信未被拦截，重点为 TCP/UDP 48898。不要为了排障长期关闭防火墙；应添加精确规则或由现场 IT 处理。
 
-1. T0 硬件阻塞已解除：按 `AGENT_HANDOFF.md` 先做 **45 秒预检**（短时采集 + `verify_alignment.py`），通过后进入 T3 长稳测试。
-2. 可清理本机 `StaticRoutes.xml` 中无效的备用路由 `RobotController_Alt`。
-3. 相机侧遗留问题不变：index 0 房景相机 ~29.7 fps 不达标，正式三路验证前需替换（见 0816 备忘第 4 节）。
+## 6. 常见错误速查
+
+| 报错／现象 | 优先检查 |
+|---|---|
+| `Failed to open port on AMS router` | 先查本机服务、48898 监听；若正常，再测 Win32 错误 126 和 `AdsDll.dll` 预加载 |
+| `AdsPortOpenEx=0`，`GetLastError=126` | ADS 组件加载问题；测试预加载 `Common64\AdsDll.dll` |
+| `ADSError(7)` target machine not found | 本机到机器人的静态路由 |
+| `ADSError(18)` port disabled | 对端是否认可本机 Net ID＋IP，路由是否冲突 |
+| `ADSError(1861)` / `0x745` | 目标 Net ID 错误或对端拒绝 |
+| TCP 连接被 RST | 对端路由表可能没有本机 Net ID |
+| 连接接受但响应超时 | 对端回包路由中的本机 IP 可能过期 |
+| open/read_state 正常，符号失败 | 符号名、数组长度、PLC 数据类型和运行状态 |
+| GUI 能连但 Python 不能连 | 检查新客户端端口注册；不要直接修改远端路由 |
+
+## 7. 验收清单
+
+迁移或修复完成后，按顺序验收：
+
+- [ ] `TcSysSrv` 正常运行；
+- [ ] 本机 AMS Net ID 已记录；
+- [ ] 双向静态路由与当前 IP 一致；
+- [ ] 项目 ADS 兼容修复已加载；
+- [ ] `pyads.open()` 成功；
+- [ ] `read_state()` 正常；
+- [ ] 8 类机器人采集符号均可读；
+- [ ] `Joint_Angles` 返回 48 个数值；
+- [ ] `CycleCount`／`CycleTime` 可读，时间轴正常；
+- [ ] Web 机器人链路自检通过；
+- [ ] 短时 TwinCAT＋相机联合采集无 ADS 错误；
+- [ ] 长时采集无掉线、零样本或时间戳异常。
+
+## 8. 历史案例摘要
+
+### 2026-08-17：重装 Windows 后的链路断裂
+
+当时故障包括：`TcSysSrv` 未注册、`StaticRoutes.xml` 丢失、双向路由失效。修复 TwinCAT 并重建双向路由后，ADS 恢复，8 类符号全部读通，全符号轮询约 290.7 Hz、0 错误。
+
+该案例说明：IP 或 Net ID 变化后，必须同步机器人侧路由。
+
+### 2026-11-16：服务正常但新客户端无法打开端口
+
+本次服务、端口、AMS Net ID、DLL 版本和远端 GUI 连接均正常，但所有新原生客户端均无法注册。最终通过 Win32 错误 126 和逐项预加载定位到 `AdsDll.dll`，并在项目中加入进程级兼容修复。无需修改 Hyper-V、PLC 或远端路由。

@@ -64,7 +64,16 @@ class USBCameraProcessConfig:
 
 
 class USBCameraProcessSource(DataSource):
-    """Data source that captures a USB camera in a separate process."""
+    """Data source that captures a camera in a separate process.
+
+    ``WORKER_MODULE`` and ``_extra_worker_args`` are the small extension surface
+    used by SDK-backed cameras; the process lifecycle stays shared.
+    """
+
+    WORKER_MODULE = 'vlgp.acquisition.process_workers.usb_camera_worker'
+
+    def _extra_worker_args(self) -> list[str]:
+        return []
 
     def __init__(self, config: USBCameraProcessConfig | None = None,
                  clock: UnifiedTimestamp | None = None,
@@ -112,7 +121,7 @@ class USBCameraProcessSource(DataSource):
             # vanish, leaving only "camera index N not opening" with no reason)
             '-u',
             '-m',
-            'vlgp.acquisition.process_workers.usb_camera_worker',
+            self.WORKER_MODULE,
             '--index', str(self.config.camera_index),
             '--topic', self.config.topic_name,
             '--out-dir', str(self._out_dir),
@@ -161,6 +170,7 @@ class USBCameraProcessSource(DataSource):
             cmd += ['--contrast', str(self.config.contrast)]
         if self.config.saturation is not None:
             cmd += ['--saturation', str(self.config.saturation)]
+        cmd += self._extra_worker_args()
 
         logger.info('Starting worker process for %s: %s', self.name, ' '.join(cmd))
         # The worker's output goes to a FILE, never a pipe: a pipe is only read

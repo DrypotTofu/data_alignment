@@ -5,8 +5,8 @@ title VLGP T15 ¥ ±Ì–£—È validate_task_hierarchy
 
 rem T13: paths derived from this script location (%~dp0).
 set PROJECT_ROOT=%~dp0..\..
-if exist "D:\miniconda3\envs\SurgDataColl\python.exe" (
-    set PYTHON=D:\miniconda3\envs\SurgDataColl\python.exe
+if exist "D:\ProgramFiles\miniconda3\envs\SurgDataColl\python.exe" (
+    set PYTHON=D:\ProgramFiles\miniconda3\envs\SurgDataColl\python.exe
 ) else (
     set PYTHON=python
 )

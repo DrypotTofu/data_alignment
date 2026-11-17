@@ -17,6 +17,7 @@ from .base_source import DataSource
 from .sources.legacy.endoscope import EndoscopeConfig, EndoscopeSource, EndoscopeWriter
 from .sources.legacy.usb_camera import USBCameraConfig, USBCameraSource, USBCameraWriter
 from .sources.legacy.usb_multi_camera import USBMultiCameraConfig, USBMultiCameraSource, USBMultiCameraWriter
+from .sources.hws_camera_process import HWSCameraProcessConfig, HWSCameraProcessSource
 from .sources.reserved_arm import ReservedArmConfig, ReservedArmSource
 from .sources.twincat import TwinCATConfig, TwinCATSource, TwinCATWriter
 from .sources.usb_camera_process import USBCameraProcessConfig, USBCameraProcessSource
@@ -114,33 +115,49 @@ def _build_twincat(source_cfg: dict[str, Any]) -> DataSource:
     return TwinCATSource(config=cfg)
 
 
-def _build_process_camera(source_cfg: dict[str, Any]) -> DataSource:
+def _process_camera_kwargs(source_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Shared process-camera options; SDK sources only add their own controls."""
     name = source_cfg.get('name', 'process_camera')
-    cfg = USBCameraProcessConfig(
-        camera_index=source_cfg.get('camera_index', 0),
-        topic_name=source_cfg.get('topic_name', name),
-        width=source_cfg.get('width'),
-        height=source_cfg.get('height'),
-        fps=source_cfg.get('fps'),
-        fourcc=source_cfg.get('fourcc', 'MJPG'),
-        backend=source_cfg.get('backend', 'dshow'),
-        image_format=source_cfg.get('image_format', 'png'),
-        stop_file=source_cfg.get('stop_file', '.stop'),
-        ready_file=source_cfg.get('ready_file', '.ready'),
-        ready_timeout=source_cfg.get('ready_timeout', 10.0),
-        warmup_s=source_cfg.get('warmup_s', 1.5),
-        target_fps=source_cfg.get('target_fps'),
-        png_compression=source_cfg.get('png_compression', 1),
-        writer_threads=source_cfg.get('writer_threads', 1),
-        exposure=source_cfg.get('exposure'),
-        wb_temperature=source_cfg.get('wb_temperature'),
-        auto_wb=source_cfg.get('auto_wb'),
-        brightness=source_cfg.get('brightness'),
-        contrast=source_cfg.get('contrast'),
-        saturation=source_cfg.get('saturation'),
-        arm_id=source_cfg.get('arm_id'),
-    )
-    return USBCameraProcessSource(config=cfg)
+    return {
+        'camera_index': source_cfg.get('camera_index', 0),
+        'topic_name': source_cfg.get('topic_name', name),
+        'width': source_cfg.get('width'),
+        'height': source_cfg.get('height'),
+        'fps': source_cfg.get('fps'),
+        'fourcc': source_cfg.get('fourcc', 'MJPG'),
+        'backend': source_cfg.get('backend', 'dshow'),
+        'image_format': source_cfg.get('image_format', 'png'),
+        'stop_file': source_cfg.get('stop_file', '.stop'),
+        'ready_file': source_cfg.get('ready_file', '.ready'),
+        'ready_timeout': source_cfg.get('ready_timeout', 10.0),
+        'warmup_s': source_cfg.get('warmup_s', 1.5),
+        'target_fps': source_cfg.get('target_fps'),
+        'png_compression': source_cfg.get('png_compression', 1),
+        'writer_threads': source_cfg.get('writer_threads', 1),
+        'exposure': source_cfg.get('exposure'),
+        'wb_temperature': source_cfg.get('wb_temperature'),
+        'auto_wb': source_cfg.get('auto_wb'),
+        'brightness': source_cfg.get('brightness'),
+        'contrast': source_cfg.get('contrast'),
+        'saturation': source_cfg.get('saturation'),
+        'arm_id': source_cfg.get('arm_id'),
+    }
+
+
+def _build_process_camera(source_cfg: dict[str, Any]) -> DataSource:
+    return USBCameraProcessSource(
+        config=USBCameraProcessConfig(**_process_camera_kwargs(source_cfg)))
+
+
+def _build_hws_camera(source_cfg: dict[str, Any]) -> DataSource:
+    kwargs = _process_camera_kwargs(source_cfg)
+    kwargs.update({
+        'backend': 'hws_sdk',
+        'fourcc': '',
+        'sdk_dll': source_cfg.get('sdk_dll'),
+        'buffer_count': source_cfg.get('buffer_count', 4),
+    })
+    return HWSCameraProcessSource(config=HWSCameraProcessConfig(**kwargs))
 
 
 def _build_reserved_arm(source_cfg: dict[str, Any]) -> DataSource:
@@ -158,6 +175,7 @@ SOURCE_BUILDERS: dict[str, SourceBuilder] = {
     'endoscope': _build_endoscope,
     'twincat': _build_twincat,
     'process_camera': _build_process_camera,
+    'hws_camera_process': _build_hws_camera,
     'reserved_arm': _build_reserved_arm,
 }
 

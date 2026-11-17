@@ -7,8 +7,8 @@ rem T13: paths derived from this script location (%~dp0).
 rem NOTE: no "| findstr" pipe here ¡ª the --meta step runs an interactive
 rem Python prompt that must read the console stdin; a pipe would hang it.
 set PROJECT_ROOT=%~dp0..\..
-if exist "D:\miniconda3\envs\SurgDataColl\python.exe" (
-    set PYTHON=D:\miniconda3\envs\SurgDataColl\python.exe
+if exist "D:\ProgramFiles\miniconda3\envs\SurgDataColl\python.exe" (
+    set PYTHON=D:\ProgramFiles\miniconda3\envs\SurgDataColl\python.exe
 ) else (
     set PYTHON=python
 )

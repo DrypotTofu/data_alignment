@@ -4,7 +4,7 @@
 
 - `src/vlgp/` — **installable package** (T13; `pip install -e .`, import as `vlgp.*`).
   - `acquisition/` — **unified multi-modal acquisition framework** (Session + pluggable DataSources).
-    - `sources/` — active sources: `twincat`, `usb_camera_process`, `reserved_arm`.
+    - `sources/` — active sources: `twincat`, `usb_camera_process`, `hws_camera_process`, `reserved_arm`.
     - `sources/legacy/` — **deprecated** thread-based camera sources; kept only for backward
       compatibility with a runtime deprecation warning (T12-P2-5); do not use for new work.
     - `process_workers/` — camera subprocess worker (launched as `-m vlgp.acquisition...`).
@@ -41,7 +41,8 @@ Entry point: `run_acquisition.py`
 To add a new sensor/modality, subclass `acquisition.base_source.DataSource`, add a writer if the source does not write directly to disk, and register both in `acquisition.registry` (`SOURCE_BUILDERS` and `WRITER_FACTORIES`). YAML loading and validation live in `acquisition.config`; session layout path helpers live in `acquisition.session_layout`.
 
 Current built-in sources:
-- `process_camera` — single camera running in a separate OS process (**recommended**; supports `backend: msmf` for cameras that downclock when DirectShow FPS is set)
+- `process_camera` — single USB camera running in a separate OS process (**recommended**; supports `backend: msmf` for cameras that downclock when DirectShow FPS is set)
+- `hws_camera_process` — HWS SDK callback capture with device timestamps and frame indices; see `src/vlgp/acquisition/README.md`
 - `twincat` — TwinCAT ADS robot pose/joint/gripper reads, supports multi-connection and `output_all_arms` (all 8 PLC symbol groups, 4 arms)
 - `reserved_arm` — placeholder source for an arm without a physical camera
 - legacy (deprecated): `usb_camera`, `usb_multi_camera`, `endoscope`

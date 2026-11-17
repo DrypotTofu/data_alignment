@@ -1,0 +1,108 @@
+# HWS capture-card endoscope: device timestamps + frameIndex (SDK callback).
+# arm_2 uses HDPro index 0; the remaining camera bindings are unchanged.
+base_dir: ./sessions
+session_name: null
+clock_source: host_realtime
+clock_offset_ns: 0
+camera_bindings:
+  arm_1: 3
+  arm_2: 0
+  arm_3: 1
+sources:
+- type: twincat
+  name: robot_pose
+  topic_name: robot/pose
+  ams_net_id: 169.254.226.99.1.1
+  ams_port: 851
+  ip_address: 192.168.22.22
+  cycle_period_ms: 1.0
+  selected_arm: 1
+  timestamp_mode: twincat
+  twincat_master_sync_alpha: 0.05
+  use_rtt_correction: true
+  output_dual_timestamps: true
+  num_connections: 1
+  output_all_arms: true
+  symbols:
+    joint_angles: Sir_RunRunShaw_Database.Joint_Angles
+    armframe_positions: Sir_RunRunShaw_Database.EndEffector_Coordinate_ArmFrame
+    scopeframe_positions: Sir_RunRunShaw_Database.EndEffector_Coordinate_ScopeFrame
+    orientations: Sir_RunRunShaw_Database.EndEffector_Orientation
+    instrument_types: Sir_RunRunShaw_Database.Instrument_Type
+    gripper_angle: Sir_RunRunShaw_Database.Gripper_Angle
+    gripper_signal: Sir_RunRunShaw_Database.Gripper_Signal
+    energy_instrument_status: Sir_RunRunShaw_Database.EnergyInstrument_Status
+  symbol_shapes:
+    joint_angles:
+    - 4
+    - 12
+    armframe_positions:
+    - 4
+    - 3
+    scopeframe_positions:
+    - 4
+    - 3
+    orientations:
+    - 4
+    - 4
+    instrument_types:
+    - 4
+    gripper_angle:
+    - 4
+    gripper_signal:
+    - 4
+    energy_instrument_status:
+    - 4
+- type: hws_camera_process
+  name: camera_arm_2
+  topic_name: camera/arm_2/image_raw
+  arm_id: 2
+  width: 1280
+  height: 720
+  # The card outputs about 60 fps even when 30 is requested; decimate on the
+  # device timestamp grid, not on Python callback arrival times.
+  fps: 60
+  target_fps: 30
+  buffer_count: 4
+  # sdk_dll defaults to D:\ProgramFiles\HWS_Capture_SDK_v6.0.0\binX64\hwscapture.dll
+  # and can also be overridden with the HWS_SDK_DLL environment variable.
+  image_format: png
+  png_compression: 1
+  writer_threads: 6
+  ready_timeout: 20.0
+- type: process_camera
+  name: camera_arm_1
+  topic_name: camera/arm_1/image_raw
+  arm_id: 1
+  width: 640
+  height: 480
+  fps: 60
+  target_fps: 30
+  fourcc: MJPG
+  backend: dshow
+  image_format: png
+  writer_threads: 2
+  exposure: -5
+  auto_wb: 1
+  brightness: 36
+  contrast: 5
+  saturation: 64
+  ready_timeout: 20.0
+- type: process_camera
+  name: camera_arm_3
+  topic_name: camera/arm_3/image_raw
+  arm_id: 3
+  width: 640
+  height: 480
+  fps: 60
+  target_fps: 30
+  fourcc: MJPG
+  backend: dshow
+  image_format: png
+  exposure: -5
+  auto_wb: 1
+  brightness: 36
+  contrast: 5
+  saturation: 64
+  ready_timeout: 20.0
+  enabled: true

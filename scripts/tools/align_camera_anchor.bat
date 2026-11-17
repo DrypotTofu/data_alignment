@@ -5,8 +5,8 @@ title VLGP 生成 30Hz 对齐表 align_camera_anchor
 
 rem T13: paths derived from this script location (%~dp0).
 set PROJECT_ROOT=%~dp0..\..
-if exist "D:\miniconda3\envs\SurgDataColl\python.exe" (
-    set PYTHON=D:\miniconda3\envs\SurgDataColl\python.exe
+if exist "D:\ProgramFiles\miniconda3\envs\SurgDataColl\python.exe" (
+    set PYTHON=D:\ProgramFiles\miniconda3\envs\SurgDataColl\python.exe
 ) else (
     set PYTHON=python
 )
