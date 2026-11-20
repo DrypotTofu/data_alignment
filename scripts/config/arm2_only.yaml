@@ -11,7 +11,7 @@
 # 用法：Web「采集」弹窗选择本配置，或
 #   python -m vlgp.capture.manual_acquisition --config scripts/config/arm2_only.yaml \
 #       --name test_YYYYMMDD_HHMMSS --stop-file var/web_acq/stop.flag
-base_dir: D:\AI4Surg\DataCollection\data_alignment\sessions
+base_dir: E:\AI4Surg\data_alignment\sessions
 session_name: null
 clock_source: host_realtime
 clock_offset_ns: 0

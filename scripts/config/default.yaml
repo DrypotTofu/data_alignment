@@ -1,4 +1,4 @@
-base_dir: ./sessions
+base_dir: E:\AI4Surg\data_alignment\sessions
 session_name: null
 clock_source: host_realtime
 clock_offset_ns: 0

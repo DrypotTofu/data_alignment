@@ -1,6 +1,6 @@
 # Dual HWS capture-card configuration verified with TwinCAT on 2026-11-17.
 # arm_2 -> HDPro 1 (SDK index 0); arm_1 -> HDPro 2 (SDK index 1).
-base_dir: ./sessions
+base_dir: E:\AI4Surg\data_alignment\sessions
 session_name: null
 clock_source: host_realtime
 clock_offset_ns: 0
